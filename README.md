@@ -147,6 +147,17 @@ Ejecutar pantalla de informe CAEA:
 python informacaea.py
 ```
 
+## Validacion tecnica local
+
+Antes de ejecutar el sistema en una instalacion nueva:
+
+```powershell
+python check_project.py
+```
+
+El comando revisa archivos esperados, dependencias importables y configuracion
+basica sin conectarse a AFIP, base de datos ni SMTP.
+
 ## Build
 
 El proyecto incluye un script historico de compilacion:
