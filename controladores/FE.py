@@ -113,7 +113,6 @@ class FEv1(WSFEv1):
         if solicitar:
             #Generar un Ticket de Requerimiento de Acceso(TRA)
             tra = wsaa.CreateTRA(service=service)
-            # logging.error("Tra {}".format(tra))
             #Generar el mensaje firmado(CMS)
             if LeerIni(clave='homo') == 'S':#homologacion
                 cms = wsaa.SignTRA(tra, self.cert_homo, self.privatekey_homo)
@@ -124,7 +123,6 @@ class FEv1(WSFEv1):
                         self.cert_prod, self.privatekey_prod
                     ))
                 cms = wsaa.SignTRA(tra, abspath(self.cert_prod), abspath(self.privatekey_prod))
-                # logging.error("CMS {}".format(cms))
                 ok = wsaa.Conectar("", self.url_prod, cacert=self.cacert, timeout=TIMEOUT) #Produccion
 
             #Llamar al web service para autenticar

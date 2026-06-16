@@ -437,8 +437,11 @@ def enviar_email_en_hilo(email_id):
                 # Hacer login solo si hay usuario/clave
                 if smtp_user and smtp_password:
                     try:
-                        pass_preview = f"{smtp_password[:3]}...{smtp_password[-3:]}" if len(smtp_password) > 6 else "***"
-                        logging.info(f"🔑 Intentando login como '{smtp_user}' con password '{pass_preview}' (len={len(smtp_password)})")
+                        logging.info(
+                            "🔑 Intentando login SMTP como '%s' con password configurada: %s",
+                            smtp_user,
+                            bool(smtp_password),
+                        )
                         server.login(smtp_user, smtp_password)
                         logging.info(f"✓ Login SMTP exitoso como {smtp_user}")
                     except Exception:
