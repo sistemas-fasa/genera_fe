@@ -124,6 +124,16 @@ python tests\send_email_test.py
 
 Para la prueba de email, configurar antes `.env` y opcionalmente `TEST_TO`.
 
+Migraciones manuales:
+
+```powershell
+python migrations\ensure_emails_pendientes_schema.py
+```
+
+La migracion se ejecuta contra la base configurada en `sistema.ini`, asume que
+la tabla `emails_pendientes` ya existe y es idempotente: se puede ejecutar mas
+de una vez sin duplicar columnas existentes.
+
 ## Logging
 
 El logging se inicializa desde `main.py` usando `initialize_logger(LeerIni("iniciosistema"))`.
