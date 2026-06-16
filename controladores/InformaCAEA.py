@@ -51,7 +51,7 @@ class InformaCAEAController(ControladorBase):
                                                  Encabezado.cae == c.CAEA)
             if encabeza.count() == 0:
                 wsfe = FEv1()
-                wsfe.InformarCAEASinMovimiento(ptovta, caea)
+                wsfe.InformarCAEASinMovimiento(ptovta, c.CAEA)
             else:
                 controlador = MainController()
                 controlador.grabaxml = True
@@ -71,10 +71,17 @@ class InformaCAEAController(ControladorBase):
                         envia_correo(to_address='oscar@ferreteriaavenida.com.ar',
                                      from_address='info@ferreteriaavenida.com.ar',
                                      subject='Error al generar FE',
-                                      message="Error: {} {}".format(DeCodifica(controlador.errmsg),
-                                                                    DeCodifica(controlador.motivoobs),
-                                                                    controlador.xml_request,
-                                                                    controlador.xml_response),
+                                      message=(
+                                          "Error: {}\n"
+                                          "Motivo/Obs: {}\n\n"
+                                          "XML request:\n{}\n\n"
+                                          "XML response:\n{}"
+                                      ).format(
+                                          DeCodifica(controlador.errmsg or ""),
+                                          DeCodifica(controlador.motivoobs or ""),
+                                          DeCodifica(controlador.xml_request or ""),
+                                          DeCodifica(controlador.xml_response or "")
+                                      ),
                                       password_email=os.getenv('FASA_ERROR_EMAIL_PASSWORD') or os.getenv('SMTP_PASSWORD', ''))
                     d.save()
             caeaupdate = CAEA.get_by_id(c.idCAEA)
