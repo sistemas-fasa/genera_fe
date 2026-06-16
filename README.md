@@ -56,9 +56,20 @@ Motivo:
 
 Instalacion recomendada:
 
-1. Elegir un commit probado en homologacion.
-2. Configurarlo en `requirements-pyafipws.txt`.
-3. Instalar:
+El commit actualmente fijado es:
+
+```text
+d595b072110accec9dae1ddb58165ab847b8520a
+```
+
+Para actualizarlo:
+
+1. Probar nuevo commit en homologacion AFIP/ARCA.
+2. Reemplazar el SHA en `requirements-pyafipws.txt`.
+3. Ejecutar `check_project.py` y las pruebas estaticas.
+4. Documentar el cambio en el PR.
+
+Instalar:
 
    ```powershell
    python -m pip install -r requirements.txt
