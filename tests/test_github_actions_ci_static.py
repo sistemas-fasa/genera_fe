@@ -36,6 +36,7 @@ def test_ci_workflow_runs_safe_static_validation_commands():
     expected_commands = [
         "python -m compileall -q .",
         "python -m pytest",
+        "tests/test_github_actions_ci_static.py",
         "tests/test_check_project_static.py",
         "tests/test_pyafipws_strategy_static.py",
         "tests/test_afip_config_static.py",
