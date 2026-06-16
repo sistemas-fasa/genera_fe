@@ -1,0 +1,3 @@
+# PyAfipWs desde GitHub oficial.
+# IMPORTANTE: reemplazar <COMMIT_SHA_PROBADO> por un commit validado en homologacion antes de produccion.
+pyafipws @ git+https://github.com/reingart/pyafipws.git@<COMMIT_SHA_PROBADO>
