@@ -169,6 +169,43 @@ python check_project.py
 El comando revisa archivos esperados, dependencias importables y configuracion
 basica sin conectarse a AFIP, base de datos ni SMTP.
 
+### Validacion para produccion Windows
+
+Antes de poner una instalacion Windows en produccion:
+
+```powershell
+python check_project.py --production
+```
+
+Tambien se puede usar:
+
+```powershell
+python check_project.py --prod
+```
+
+Este modo es estricto para configuracion operativa:
+
+- exige `sistema.ini` y `.env`;
+- exige `homo=N`;
+- exige `base=mysql`;
+- exige timeout AFIP configurado;
+- exige certificados productivos existentes;
+- exige ejecutable generado;
+- valida PyAfipWs con commit fijo si esta corriendo dentro del repo.
+
+No conecta a AFIP. No conecta a DB. No envia emails.
+
+No exige que PyQt5 este importable si se usa ejecutable, porque las
+dependencias Python pueden estar embebidas en el binario.
+
+Si el ejecutable no usa el nombre historico, se puede configurar en
+`sistema.ini`:
+
+```ini
+[param]
+ejecutable = dist/main.exe
+```
+
 ## CI
 
 El repositorio ejecuta GitHub Actions en cada PR y push a main.
