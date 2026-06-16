@@ -1,3 +1,4 @@
 # PyAfipWs desde GitHub oficial.
-# IMPORTANTE: reemplazar <COMMIT_SHA_PROBADO> por un commit validado en homologacion antes de produccion.
-pyafipws @ git+https://github.com/reingart/pyafipws.git@<COMMIT_SHA_PROBADO>
+# Commit fijado para instalacion reproducible.
+# Actualizar solo despues de probar en homologacion AFIP/ARCA.
+pyafipws @ git+https://github.com/reingart/pyafipws.git@d595b072110accec9dae1ddb58165ab847b8520a
