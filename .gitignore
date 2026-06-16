@@ -31,6 +31,7 @@ dist/
 # Vendored/downloaded packages
 *.whl
 *.tar.gz
+# Legacy/local PyAfipWs copies. Preferred source is official GitHub with pinned commit.
 pyafipws/
 
 # Database dumps and local data

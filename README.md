@@ -41,6 +41,37 @@ tests/           Scripts de prueba manual
 
 > `pyafipws/`, certificados, tokens WSAA, logs, facturas generadas y configuraciones reales no se versionan por seguridad.
 
+## Dependencia PyAfipWs
+
+El proyecto usa `pyafipws` para WSAA, WSFEv1, WSCDC, FCE y padron AFIP.
+
+Estrategia principal:
+
+- Usar el repo oficial de GitHub: <https://github.com/reingart/pyafipws>.
+
+Motivo:
+
+- La version publicada en PyPI (`PyAfipWs 2.7.1874`) es de 2016 y puede estar desactualizada.
+- AFIP/ARCA cambia servicios y validaciones, por lo que se prefiere una version mas reciente del repo oficial.
+
+Instalacion recomendada:
+
+1. Elegir un commit probado en homologacion.
+2. Configurarlo en `requirements-pyafipws.txt`.
+3. Instalar:
+
+   ```powershell
+   python -m pip install -r requirements.txt
+   python -m pip install -r requirements-pyafipws.txt
+   ```
+
+Alternativa legacy:
+
+- Algunas instalaciones historicas pueden tener carpeta local `pyafipws/` junto al codigo.
+- Esa carpeta esta ignorada por Git.
+- Si se usa copia local, documentar commit/origen en la instalacion.
+- No modificar ni versionar `pyafipws/` dentro de este repo.
+
 ## Configuracion local
 
 Crear los archivos de configuracion locales a partir de los ejemplos:

@@ -16,8 +16,9 @@ cryptography>=42,<47
 # Factura electronica AFIP / ARCA
 # El codigo importa pyafipws.wsaa, pyafipws.wsfev1, pyafipws.wsfecred,
 # pyafipws.wscdc, pyafipws.padron y pyafipws.ws_sr_padron.
-# En produccion puede usarse una copia local en ./pyafipws o instalar desde PyPI.
-PyAfipWs==2.7.1874
+# PyAfipWs no se instala desde PyPI porque la release publicada alli es antigua.
+# Ver README: seccion "Dependencia PyAfipWs".
+# Para instalacion reproducible, usar requirements-pyafipws.txt con commit fijo.
 
 # PDF, QR y reportes
 fpdf==1.7.2
