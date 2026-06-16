@@ -1,0 +1,31 @@
+# Dependencias principales del sistema Genera FE 2025
+# Instalacion sugerida:
+#   python -m pip install -r requirements.txt
+
+# Interfaz grafica de escritorio
+PyQt5>=5.15,<5.16
+
+# ORM y conexion a base de datos
+peewee>=3.17,<4
+PyMySQL>=1.1,<2
+
+# Configuracion y seguridad
+python-dotenv>=1.0,<2
+cryptography>=42,<47
+
+# Factura electronica AFIP / ARCA
+# El codigo importa pyafipws.wsaa, pyafipws.wsfev1, pyafipws.wsfecred,
+# pyafipws.wscdc, pyafipws.padron y pyafipws.ws_sr_padron.
+# En produccion puede usarse una copia local en ./pyafipws o instalar desde PyPI.
+PyAfipWs==2.7.1874
+
+# PDF, QR y reportes
+fpdf==1.7.2
+qrcode[pil]>=7.4,<9
+XlsxWriter>=3.1,<4
+
+# Integracion Windows usada por libs.Utiles.AbrirArchivo
+pywin32>=306; sys_platform == "win32"
+
+# Build historico con compila.bat / PyInstaller
+pyinstaller>=6,<7
