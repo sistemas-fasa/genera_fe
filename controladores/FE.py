@@ -22,12 +22,13 @@ import qrcode
 
 from controladores.pyqr import PyQR
 from libs import Ventanas
-from libs.Utiles import LeerIni, ubicacion_sistema, inicializar_y_capturar_excepciones, FechaMysql
+from libs.Utiles import LeerIni, LeerTimeoutAFIP, ubicacion_sistema, inicializar_y_capturar_excepciones, FechaMysql
 from pyafipws.wsaa import WSAA
 from pyafipws.wscdc import WSCDC
 from pyafipws.wsfev1 import WSFEv1
 
-TIMEOUT = 15
+def _afip_timeout():
+    return LeerTimeoutAFIP()
 
 class FEv1(WSFEv1):
 
@@ -75,7 +76,7 @@ class FEv1(WSFEv1):
         wrapper = ""  # "pycurl"
         #cacert = True  # geotrust.crt"
         # ok = self.Conectar(cache, wsdl, proxy, wrapper, self.cacert)
-        ok = self.Conectar(cache, wsdl, proxy, wrapper, True, timeout=TIMEOUT)
+        ok = self.Conectar(cache, wsdl, proxy, wrapper, True, timeout=_afip_timeout())
 
         if not ok:
             raise RuntimeError(self.Excepcion)
@@ -116,14 +117,14 @@ class FEv1(WSFEv1):
             #Generar el mensaje firmado(CMS)
             if LeerIni(clave='homo') == 'S':#homologacion
                 cms = wsaa.SignTRA(tra, self.cert_homo, self.privatekey_homo)
-                ok = wsaa.Conectar("", self.url_homo)  # Homologación
+                ok = wsaa.Conectar("", self.url_homo, timeout=_afip_timeout())  # Homologación
             else:
                 if not os.path.isfile(abspath(self.cert_prod)) or not os.path.isfile(abspath(self.privatekey_prod)):
                     logging.error("no existen los certificado {} key {} ".format(
                         self.cert_prod, self.privatekey_prod
                     ))
                 cms = wsaa.SignTRA(tra, abspath(self.cert_prod), abspath(self.privatekey_prod))
-                ok = wsaa.Conectar("", self.url_prod, cacert=self.cacert, timeout=TIMEOUT) #Produccion
+                ok = wsaa.Conectar("", self.url_prod, cacert=self.cacert, timeout=_afip_timeout()) #Produccion
 
             #Llamar al web service para autenticar
             ta = wsaa.LoginCMS(cms)

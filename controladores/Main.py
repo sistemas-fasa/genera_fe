@@ -68,6 +68,13 @@ def _email_alerta_fe_from():
     )
 
 
+def _wsfev1_url_prod():
+    wsdl_prod = _normalizar_texto_config(LeerIni(clave='url_prod', key='WSFEv1'))
+    if not wsdl_prod:
+        raise RuntimeError("Falta configurar [WSFEv1] url_prod en sistema.ini")
+    return wsdl_prod
+
+
 def enviar_correo_alerta_operativa(to_address, from_address, subject, message, password_email=None):
     destinatario = _normalizar_texto_config(to_address)
     if not destinatario:
@@ -239,8 +246,7 @@ class MainController(ControladorBase):
             if LeerIni(clave='homo') == 'S':
                 ok = wsfe.Conectar("")
             else:
-                wsdl_prod = LeerIni(clave='url_prod', key='WSFEv1')
-                ok = wsfe.Conectar("", wsdl_prod)
+                ok = wsfe.Conectar("", _wsfev1_url_prod())
 
             if not ok:
                 logging.warning("No se pudo conectar a WSFEv1 para FEDummy: %s", wsfe.Excepcion)
@@ -358,7 +364,6 @@ class MainController(ControladorBase):
         #Setear tocken y sign de autorizacion(ticket de accesso, pasos previos)
         wsfev1.SetTicketAcceso(ta)
         #Conectar al Servicio Web de Facturacion
-        #Produccion usar: *-- ok = WSFE.Conectar("", "https://servicios1.afip.gov.ar/wsfev1/service.asmx?WSDL") & & Producción
         if LeerIni(clave='homo') == 'S':
             wsfev1.Cuit = _normalizar_texto_config(
                 LeerIni(clave='afip_cuit_homologacion') or wsfev1.cuit_emisor
@@ -366,7 +371,7 @@ class MainController(ControladorBase):
             ok = wsfev1.Conectar("") #Homologacion
         else:
             wsfev1.Cuit = _normalizar_texto_config(self.cuit)  # CUIT del emisor (debe estar registrado en la AFIP)
-            ok = wsfev1.Conectar("", "https://servicios1.afip.gov.ar/wsfev1/service.asmx?WSDL")
+            ok = wsfev1.Conectar("", _wsfev1_url_prod())
 
         concepto = d.concepto
         tipo_doc = d.tipodoc
