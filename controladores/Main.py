@@ -18,7 +18,7 @@ from controladores.FCE import WsFECred
 from controladores.FE import FEv1
 from controladores.ImpresionComprobantes import ImpresionComprobantesController
 from controladores.WSConstComp import WSConstComp
-from libs.Utiles import LeerIni, FechaMysql, envia_correo, DeCodifica, inicializar_y_capturar_excepciones, desencriptar, \
+from libs.Utiles import LeerIni, FechaMysql, DeCodifica, inicializar_y_capturar_excepciones, desencriptar, \
     check_url
 from modelos.CAEA import CAEA
 from modelos.CUIT import CUIT
@@ -68,17 +68,17 @@ def _email_alerta_fe_from():
     )
 
 
-def enviar_correo_alerta_operativa(to_address, from_address, subject, message, password_email):
-    if not _normalizar_texto_config(to_address):
-        logging.warning("No se envio alerta operativa por email: falta destinatario configurado")
+def enviar_correo_alerta_operativa(to_address, from_address, subject, message, password_email=None):
+    destinatario = _normalizar_texto_config(to_address)
+    if not destinatario:
+        logging.warning("No se encolo alerta operativa por email: falta destinatario configurado")
         return False
 
-    envia_correo(
-        to_address=to_address,
-        from_address=from_address,
-        subject=subject,
-        message=message,
-        password_email=password_email
+    encolar_email(
+        destinatario=destinatario,
+        asunto=subject,
+        cuerpo_texto=message,
+        quien_envia=_normalizar_texto_config(from_address) or None
     )
     return True
 
