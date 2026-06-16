@@ -5,11 +5,12 @@ import os
 from os.path import abspath
 
 from libs import Ventanas
-from libs.Utiles import LeerIni, ubicacion_sistema, inicializar_y_capturar_excepciones
+from libs.Utiles import LeerIni, LeerTimeoutAFIP, ubicacion_sistema, inicializar_y_capturar_excepciones
 from pyafipws.wsaa import WSAA
 from pyafipws.wsfecred import WSFECred
 
-TIMEOUT = 15
+def _afip_timeout():
+    return LeerTimeoutAFIP()
 
 class WsFECred(WSFECred):
 
@@ -64,14 +65,14 @@ class WsFECred(WSFECred):
             #Generar el mensaje firmado(CMS)
             if LeerIni(clave='homo') == 'S':#homologacion
                 cms = wsaa.SignTRA(tra, self.cert_homo, self.privatekey_homo)
-                ok = wsaa.Conectar("", self.url_homo)  # Homologación
+                ok = wsaa.Conectar("", self.url_homo, timeout=_afip_timeout())  # Homologación
             else:
                 if not os.path.isfile(abspath(self.cert_prod)) or not os.path.isfile(abspath(self.privatekey_prod)):
                     logging.error("no existen los certificado {} key {} ".format(
                         self.cert_prod, self.privatekey_prod
                     ))
                 cms = wsaa.SignTRA(tra, abspath(self.cert_prod), abspath(self.privatekey_prod))
-                ok = wsaa.Conectar("", self.url_prod, cacert=self.cacert, timeout=TIMEOUT) #Produccion
+                ok = wsaa.Conectar("", self.url_prod, cacert=self.cacert, timeout=_afip_timeout()) #Produccion
 
             #Llamar al web service para autenticar
             ta = wsaa.LoginCMS(cms)

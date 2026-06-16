@@ -82,11 +82,16 @@ Los valores operativos que varian por instalacion se configuran en la seccion
 `[param]` de `sistema.ini`:
 
 - `afip_cuit_homologacion`: CUIT usado para pruebas en homologacion AFIP.
+- `afip_timeout_segundos`: timeout de conexiones a servicios AFIP/ARCA.
 - `email_admin_notificaciones`: destinatario administrativo de respaldo.
 - `email_alerta_fe_to`: destinatario de alertas por errores de FE/CAEA.
 - `email_alerta_fe_from`: remitente de alertas por errores de FE/CAEA.
 - `afip_alerta_to`: destinatario de alertas del monitor AFIP.
 - `afip_alerta_cc`: destinatarios en copia para alertas del monitor AFIP.
+
+Las URLs de servicios se configuran en las secciones `[WSFEv1]`, `[WSAA]` y
+`[WSCDC]` de `sistema.ini`, separando endpoints productivos y de homologacion
+cuando corresponde.
 
 Si falta el destinatario de una alerta operativa, el sistema registra un warning
 y continua el procesamiento sin intentar enviar el correo.

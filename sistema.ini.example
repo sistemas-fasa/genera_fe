@@ -5,6 +5,7 @@ basedatos = fe
 usuario = root
 host = 127.0.0.1
 afip_intervalo_verificacion_minutos = 2
+afip_timeout_segundos = 30
 afip_cuit_homologacion = 00000000000
 email_admin_notificaciones = admin@example.com
 email_alerta_fe_to = facturacion-alertas@example.com

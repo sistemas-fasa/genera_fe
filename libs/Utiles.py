@@ -82,6 +82,15 @@ def LeerIni(clave=None, key=None):
     return retorno
 
 
+def LeerTimeoutAFIP(default=30):
+    valor = LeerIni(clave="afip_timeout_segundos")
+    try:
+        timeout = int(valor) if valor else default
+        return max(timeout, 1)
+    except (TypeError, ValueError):
+        return default
+
+
 def GrabarIni(clave=None, key=None, valor=''):
 
     if not clave or not key:
