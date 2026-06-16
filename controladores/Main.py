@@ -37,6 +37,52 @@ from pyafipws import wsfev1
 from vistas.Main import MainView
 
 
+def _normalizar_texto_config(valor):
+    if valor is None:
+        return ''
+    if isinstance(valor, bytes):
+        return valor.decode('ascii', errors='ignore').strip()
+    return str(valor).strip()
+
+
+def _email_admin_notificaciones():
+    return _normalizar_texto_config(
+        LeerIni(clave='email_admin_notificaciones') or
+        ParamSist.ObtenerParametro('EMAIL_ADMIN_NOTIFICACIONES')
+    )
+
+
+def _email_alerta_fe_to():
+    return _normalizar_texto_config(
+        LeerIni(clave='email_alerta_fe_to') or
+        LeerIni(clave='to_address', key='email') or
+        _email_admin_notificaciones()
+    )
+
+
+def _email_alerta_fe_from():
+    return _normalizar_texto_config(
+        LeerIni(clave='email_alerta_fe_from') or
+        LeerIni(clave='from_address', key='email') or
+        os.getenv('SMTP_FROM')
+    )
+
+
+def enviar_correo_alerta_operativa(to_address, from_address, subject, message, password_email):
+    if not _normalizar_texto_config(to_address):
+        logging.warning("No se envio alerta operativa por email: falta destinatario configurado")
+        return False
+
+    envia_correo(
+        to_address=to_address,
+        from_address=from_address,
+        subject=subject,
+        message=message,
+        password_email=password_email
+    )
+    return True
+
+
 class MainController(ControladorBase):
 
     lProcesa = True
@@ -92,8 +138,10 @@ class MainController(ControladorBase):
         return timedelta(minutes=minutos)
 
     def _destinatarios_alerta_afip(self):
-        destinatario = LeerIni(clave='afip_alerta_to') or 'sistemas@ferreteriaavenida.com.ar'
-        cc = LeerIni(clave='afip_alerta_cc') or 'oscar@ferreteriaavenida.com.ar'
+        destinatario = _normalizar_texto_config(
+            LeerIni(clave='afip_alerta_to') or _email_admin_notificaciones()
+        )
+        cc = _normalizar_texto_config(LeerIni(clave='afip_alerta_cc'))
         return destinatario, cc
 
     def _debe_notificar_arranque_afip(self):
@@ -101,6 +149,10 @@ class MainController(ControladorBase):
         return valor == 'S'
 
     def _notificar_arranque_monitor_afip(self, destinatario, cc):
+        if not destinatario:
+            logging.warning("Monitor AFIP arranque - no se envia email porque falta destinatario configurado")
+            return
+
         momento = datetime.now().strftime('%d/%m/%Y %H:%M:%S')
         asunto = 'Monitor AFIP iniciado'
         mensaje = (
@@ -207,6 +259,10 @@ class MainController(ControladorBase):
 
     def _notificar_estado_afip(self, disponible, estados=None, estados_anteriores=None):
         destinatario, cc = self._destinatarios_alerta_afip()
+        if not destinatario:
+            logging.warning("Monitor AFIP estado - no se envia email porque falta destinatario configurado")
+            return
+
         momento = datetime.now().strftime('%d/%m/%Y %H:%M:%S')
         estados = estados or {}
         estados_anteriores = estados_anteriores or {}
@@ -304,10 +360,12 @@ class MainController(ControladorBase):
         #Conectar al Servicio Web de Facturacion
         #Produccion usar: *-- ok = WSFE.Conectar("", "https://servicios1.afip.gov.ar/wsfev1/service.asmx?WSDL") & & Producción
         if LeerIni(clave='homo') == 'S':
-            wsfev1.Cuit = '20233472035'  # CUIT del programador para pruebas
+            wsfev1.Cuit = _normalizar_texto_config(
+                LeerIni(clave='afip_cuit_homologacion') or wsfev1.cuit_emisor
+            )
             ok = wsfev1.Conectar("") #Homologacion
         else:
-            wsfev1.Cuit = self.cuit  # CUIT del emisor (debe estar registrado en la AFIP)
+            wsfev1.Cuit = _normalizar_texto_config(self.cuit)  # CUIT del emisor (debe estar registrado en la AFIP)
             ok = wsfev1.Conectar("", "https://servicios1.afip.gov.ar/wsfev1/service.asmx?WSDL")
 
         concepto = d.concepto
@@ -391,14 +449,10 @@ class MainController(ControladorBase):
                 fecha_desde=fecha_cbte,
                 fecha_hasta=fecha_cbte
             )
-            # envia_correo(to_address='oscar@ferreteriaavenida.com.ar',
-            #             from_address='info@ferreteriaavenida.com.ar',
-            #              subject='Error al generar NC',
-            #              message="Error: Se genero la NC con el N Relacion {}"
-            #                      " Sin un comprobante relacionado, se informo un periodo asociado".format(
-            #                  d.nrelacion
-            #              ),
-            #              password_email=os.getenv('FASA_ERROR_EMAIL_PASSWORD') or os.getenv('SMTP_PASSWORD', ''))
+            logging.warning(
+                "NC/ND sin comprobante relacionado: se informa periodo asociado para nrelacion %s",
+                d.nrelacion
+            )
         else:
             for c in cbterel:
                 tipo = c.tipocbte
@@ -547,8 +601,8 @@ class MainController(ControladorBase):
                                          Encabezado.tipows == 'WS')
         total = data.count() or 1
         i = 1.
-        to_address = LeerIni(clave='to_address', key='email') or 'oscar@ferreteriaavenida.com.ar'
-        from_email = LeerIni(clave='from_address', key='email') or 'info@ferreteriaavenida.com.ar'
+        to_address = _email_alerta_fe_to()
+        from_email = _email_alerta_fe_from()
         if LeerIni(clave='password_email', key='email'):
             password_email = desencriptar(LeerIni(clave='password_email', key='email'), LeerIni('key'))
         else:
@@ -571,12 +625,14 @@ class MainController(ControladorBase):
                     d.vencecae = datetime.today()
                     d.motivoobs = self.xml_response
                     if LeerIni(clave='homo') == 'N':
-                        envia_correo(to_address=to_address,
-                                    from_address=from_email,
-                                    subject='Error al generar FE',
-                                    message="Error: {} {}".format(DeCodifica(self.errmsg),
-                                                                DeCodifica(self.motivoobs)),
-                                    password_email=password_email)
+                        enviar_correo_alerta_operativa(
+                            to_address=to_address,
+                            from_address=from_email,
+                            subject='Error al generar FE',
+                            message="Error: {} {}".format(DeCodifica(self.errmsg),
+                                                          DeCodifica(self.motivoobs)),
+                            password_email=password_email
+                        )
                 d.save()
                 i += 1
             except Exception as e:
@@ -586,11 +642,13 @@ class MainController(ControladorBase):
                 d.errorprog = traceback.format_exc()
                 d.save()
                 print ("Error: {}".format(e))
-                envia_correo(to_address=to_address,
-                             from_address=from_email,
-                             subject='Error al generar FE',
-                             message="Error: {} {}".format(e, traceback.format_exc()),
-                             password_email=password_email)
+                enviar_correo_alerta_operativa(
+                    to_address=to_address,
+                    from_address=from_email,
+                    subject='Error al generar FE',
+                    message="Error: {} {}".format(e, traceback.format_exc()),
+                    password_email=password_email
+                )
 
         self.view.lblProcesamiento.setText("Sin comprobantes para procesar")
         self.view.avance.actualizar(100)
@@ -635,11 +693,13 @@ class MainController(ControladorBase):
                 d.errmsg = 'No existe CAEA para el periodo y orden'
                 d.vencecae = datetime.today()
                 d.save()
-                envia_correo(to_address='oscar@ferreteriaavenida.com.ar',
-                              from_address='info@ferreteriaavenida.com.ar',
-                              subject='Error al generar FE con CAEA',
-                              message="Error: {}".format(d.errmsg),
-                              password_email=os.getenv('FASA_ERROR_EMAIL_PASSWORD') or os.getenv('SMTP_PASSWORD', ''))
+                enviar_correo_alerta_operativa(
+                    to_address=_email_alerta_fe_to(),
+                    from_address=_email_alerta_fe_from(),
+                    subject='Error al generar FE con CAEA',
+                    message="Error: {}".format(d.errmsg),
+                    password_email=os.getenv('FASA_ERROR_EMAIL_PASSWORD') or os.getenv('SMTP_PASSWORD', '')
+                )
 
     def Constatacion(self):
         data = Constatacion.select().where(
@@ -658,8 +718,13 @@ class MainController(ControladorBase):
                     wsdc.cert_prod = d.empresa.crt.strip()
                     wsdc.privatekey_prod = d.empresa.key.strip()
                 else:
-                    wsdc.cert_homo = 'certificados/vogel_wsass.crt'
-                    wsdc.privatekey_homo = 'certificados/clave_privada_20233472035_201804143312.key'
+                    wsdc.cert_homo = LeerIni(clave='cert_homo', key='WSAA')
+                    wsdc.privatekey_homo = LeerIni(clave='privatekey_homo', key='WSAA')
+                    if not wsdc.cert_homo or not wsdc.privatekey_homo:
+                        logging.error(
+                            "Constatacion homologacion sin cert_homo/privatekey_homo configurados en WSAA"
+                        )
+                        continue
                 wsdc.empresa = d.empresa.codigo
                 wsdc.Cuit = d.empresa.cuit
                 self.view.lblProcesamiento.setText("Constatando comprobante {} de {}".format(i, total))
