@@ -1,0 +1,52 @@
+# Local secrets and environment
+.env
+*.env
+!.env.example
+sistema.ini
+!sistema.ini.example
+prueba_email.py
+
+# AFIP certificates, private keys and generated tokens
+certificados/
+*-ta.xml
+wsfe-*-ta.xml
+*.key
+*.pem
+*.p12
+*.pfx
+
+# Runtime output and generated business documents
+*.log
+errors.log
+facturas/
+pdf/
+
+# Build artifacts
+build/
+dist/
+*.spec
+*.exe
+*.zip
+
+# Vendored/downloaded packages
+*.whl
+*.tar.gz
+pyafipws/
+
+# Database dumps and local data
+mysql/*.sql
+*.sqlite
+*.sqlite3
+*.db
+
+# Python/cache/editor files
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.vscode/
+
+# Windows metadata
+Thumbs.db
+Desktop.ini

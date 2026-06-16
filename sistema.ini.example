@@ -1,0 +1,43 @@
+[param]
+iniciosistema = x:\fasapython\genera-fe-2025\
+nombre_sistema = Fasa - Sistema FE
+basedatos = fe
+usuario = root
+host = 127.0.0.1
+afip_intervalo_verificacion_minutos = 2
+afip_alerta_to = sistemas@example.com
+afip_alerta_cc = admin@example.com
+afip_notificar_arranque = S
+key = change-me
+password = change-me
+homo = S
+base = mysql
+
+[WSFEv1]
+cat_iva = 1
+pto_vta = 18
+cuit = 00000000000
+url_prod = https://servicios1.afip.gov.ar/wsfev1/service.asmx?WSDL
+url_homo = https://wswhomo.afip.gov.ar/wsfev1/service.asmx?WSDL
+
+[WSAA]
+cert_homo = certificados/certificado_homologacion.crt
+cert_prod = certificados/certificado_produccion.crt
+privatekey_homo = certificados/clave_privada_homo.key
+privatekey_prod = certificados/clave_privada_prod.key
+url_prod = https://wsaa.afip.gov.ar/ws/services/LoginCms
+url_homo = https://wsaahomo.afip.gov.ar/ws/services/LoginCms
+
+[FACTURA]
+empresa = Ferreteria Avenida SA
+membrete1 = Direccion
+membrete2 = Localidad - Provincia
+cuit = Cuit 00-00000000-0
+iibb = IIBB 00-00000000-0
+iva = Responsable Inscripto
+inicio = 01/01/2000
+num_copias = 2
+
+[WSCDC]
+cuit = 00000000000
+url_prod = https://servicios1.afip.gov.ar/WSCDC/service.asmx?WSDL
