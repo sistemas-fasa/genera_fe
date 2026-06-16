@@ -1,4 +1,4 @@
-from PyQt4.QtGui import QVBoxLayout, QHBoxLayout
+from PyQt5.QtWidgets import QVBoxLayout, QHBoxLayout
 
 from libs.Botones import Boton, BotonCerrarFormulario
 from libs.EntradaTexto import EntradaTexto

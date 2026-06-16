@@ -1,7 +1,7 @@
 import os
 from datetime import datetime
 
-from PyQt4.QtGui import QApplication
+from PyQt5.QtWidgets import QApplication
 
 from controladores.ControladorBase import ControladorBase
 from controladores.FE import FEv1

@@ -23,7 +23,7 @@ from datetime import datetime
 
 from os.path import join
 
-from PyQt4.QtGui import QApplication
+from PyQt5.QtWidgets import QApplication
 
 from libs.Utiles import LeerIni
 
