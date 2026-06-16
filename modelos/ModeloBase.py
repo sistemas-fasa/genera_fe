@@ -20,14 +20,40 @@ from peewee import MySQLDatabase, Model, Field, BooleanField, SqliteDatabase
 
 from libs.Utiles import LeerIni, desencriptar
 
-if LeerIni(clave='base') == 'sqlite':
+
+def _leer_base_config():
+    return (LeerIni(clave='base') or 'mysql').strip().lower()
+
+
+def _crear_mysql_database(nombre_base):
+    key = LeerIni('key')
+    password_encrypted = LeerIni('password')
+    usuario = LeerIni("usuario")
+    host = LeerIni("host")
+
+    if not key or not password_encrypted:
+        raise RuntimeError("Faltan key/password en sistema.ini para configurar MySQL")
+    if not nombre_base or not usuario or not host:
+        raise RuntimeError("Faltan basedatos/usuario/host en sistema.ini para configurar MySQL")
+
+    password = desencriptar(str.encode(password_encrypted), str.encode(key))
+    return MySQLDatabase(
+        nombre_base,
+        user=usuario,
+        password=password,
+        host=host,
+        port=3306
+    )
+
+
+if _leer_base_config() == 'sqlite':
     db = SqliteDatabase('sistema.db')
+    # En modo sqlite se reutiliza la misma DB para evitar errores de configuracion;
+    # el uso real de dbfasa en sqlite queda limitado a pruebas.
+    dbfasa = db
 else:
-    password = desencriptar(str.encode(LeerIni('password')), str.encode(LeerIni('key')))
-    db = MySQLDatabase(LeerIni("basedatos"), user=LeerIni("usuario"), password=password,
-                   host=LeerIni("host"), port=3306)
-dbfasa = MySQLDatabase("fasa", user=LeerIni("usuario"), password=password,
-                host=LeerIni("host"), port=3306)    
+    db = _crear_mysql_database(LeerIni("basedatos"))
+    dbfasa = _crear_mysql_database("fasa")
 
 class ModeloBase(Model):
 
@@ -50,13 +76,21 @@ class BitBooleanField(BooleanField):
 
     def db_value(self, value):
         if isinstance(db, SqliteDatabase):
-            return value == 1
+            if value is None:
+                return None
+            return bool(value)
         return value
 
     def python_value(self, value):
         if isinstance(db, SqliteDatabase):
-            return value == 1
-        return value == b'\01'
+            if value is None:
+                return None
+            return bool(value)
+        if value is None:
+            return None
+        if isinstance(value, bytes):
+            return value == b'\x01'
+        return bool(value)
     
 class ModeloBaseFASA(Model):
 
@@ -71,4 +105,4 @@ class ModeloBaseFASA(Model):
 
     """A base model that will use our MySQL database"""
     class Meta:
-        database = dbfasa    
+        database = dbfasa

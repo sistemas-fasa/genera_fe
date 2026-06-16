@@ -15,6 +15,7 @@ afip_notificar_arranque = S
 key = change-me
 password = change-me
 homo = S
+; mysql es el modo productivo; sqlite queda reservado para pruebas/local
 base = mysql
 
 [WSFEv1]
