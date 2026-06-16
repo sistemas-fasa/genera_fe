@@ -8,7 +8,7 @@
 # WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTIBILITY
 # or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
 # for more details.
-from PyQt4.QtGui import QHBoxLayout, QVBoxLayout
+from PyQt5.QtWidgets import QHBoxLayout, QVBoxLayout
 
 from libs.Botones import BotonCerrarFormulario, Boton
 from libs.EntradaTexto import EntradaTexto
