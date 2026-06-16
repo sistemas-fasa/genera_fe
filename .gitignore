@@ -47,6 +47,8 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 .vscode/
+.codegraph/
+.cursor/
 
 # Windows metadata
 Thumbs.db
