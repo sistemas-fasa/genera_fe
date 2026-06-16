@@ -28,7 +28,7 @@ from libs.Utiles import initialize_logger
 
 from controladores.FE import FEv1
 from controladores.Main import MainController, _email_alerta_fe_from, _email_alerta_fe_to, enviar_correo_alerta_operativa
-from libs.Utiles import LeerIni, FechaMysql, envia_correo, DeCodifica
+from libs.Utiles import LeerIni, FechaMysql, DeCodifica
 from modelos.Encabezado import Encabezado
 
 
