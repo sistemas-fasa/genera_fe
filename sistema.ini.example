@@ -1,5 +1,6 @@
 [param]
 iniciosistema = x:\fasapython\genera-fe-2025\
+ejecutable = dist/main.exe
 nombre_sistema = Fasa - Sistema FE
 basedatos = fe
 usuario = root

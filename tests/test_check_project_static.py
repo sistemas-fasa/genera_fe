@@ -51,3 +51,51 @@ def test_readme_documents_local_validation_command():
     readme = read_text("README.md")
 
     assert "python check_project.py" in readme
+
+
+def test_check_project_documents_production_validation_command():
+    readme = read_text("README.md")
+
+    assert "python check_project.py --production" in readme
+    assert "produccion Windows" in readme
+    assert "ejecutable" in readme
+    assert "No conecta a AFIP" in readme
+    assert "No conecta a DB" in readme
+    assert "No envia emails" in readme
+
+
+def test_check_project_has_production_cli_and_strict_validations():
+    source = CHECK_PROJECT.read_text(encoding="utf-8")
+
+    required_fragments = [
+        "argparse",
+        '"--production"',
+        '"--prod"',
+        "Modo: PRODUCCION WINDOWS",
+        "Resultado: FALLÓ PRODUCCION",
+        "Resultado: OK PRODUCCION",
+        "dist/main.exe",
+        "dist/genera_fe.exe",
+        "dist/GeneraFE.exe",
+        "main.exe",
+        "genera_fe.exe",
+        "GeneraFE.exe",
+        "homo",
+        '"N"',
+        "base",
+        "mysql",
+        "afip_timeout_segundos",
+        "<COMMIT_SHA_PROBADO>",
+        "re.fullmatch",
+        "{40}",
+    ]
+
+    for fragment in required_fragments:
+        assert fragment in source
+
+
+def test_check_project_promotes_local_warnings_to_production_errors():
+    source = CHECK_PROJECT.read_text(encoding="utf-8")
+
+    assert "warn_or_error" in source
+    assert "production" in source
