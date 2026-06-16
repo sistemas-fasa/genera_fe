@@ -66,10 +66,15 @@ Completar `sistema.ini` con:
 
 - Ruta `iniciosistema`.
 - Datos de base de datos.
+- `base = mysql` para el modo productivo.
 - CUIT, punto de venta y condicion de IVA.
 - Rutas de certificados y claves AFIP.
 - Endpoint de homologacion o produccion.
 - Parametro `homo = S` para homologacion o `homo = N` para produccion.
+
+El valor `base = sqlite` queda reservado para pruebas/local. En ese modo,
+`modelos/ModeloBase.py` reutiliza `sistema.db` tambien para `dbfasa` para evitar
+errores de configuracion al importar modelos.
 
 ### Configuracion operativa
 
