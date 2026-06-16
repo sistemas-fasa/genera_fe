@@ -169,6 +169,18 @@ python check_project.py
 El comando revisa archivos esperados, dependencias importables y configuracion
 basica sin conectarse a AFIP, base de datos ni SMTP.
 
+## CI
+
+El repositorio ejecuta GitHub Actions en cada PR y push a main.
+El workflow valida:
+
+- compilacion Python con compileall;
+- pruebas estaticas de seguridad/configuracion;
+- diagnostico local seguro con check_project.py.
+
+El CI no realiza llamadas AFIP/ARCA, no conecta a base de datos, no envia emails
+y no requiere certificados reales.
+
 ## Build
 
 El proyecto incluye un script historico de compilacion:
