@@ -71,6 +71,21 @@ Completar `sistema.ini` con:
 - Endpoint de homologacion o produccion.
 - Parametro `homo = S` para homologacion o `homo = N` para produccion.
 
+### Configuracion operativa
+
+Los valores operativos que varian por instalacion se configuran en la seccion
+`[param]` de `sistema.ini`:
+
+- `afip_cuit_homologacion`: CUIT usado para pruebas en homologacion AFIP.
+- `email_admin_notificaciones`: destinatario administrativo de respaldo.
+- `email_alerta_fe_to`: destinatario de alertas por errores de FE/CAEA.
+- `email_alerta_fe_from`: remitente de alertas por errores de FE/CAEA.
+- `afip_alerta_to`: destinatario de alertas del monitor AFIP.
+- `afip_alerta_cc`: destinatarios en copia para alertas del monitor AFIP.
+
+Si falta el destinatario de una alerta operativa, el sistema registra un warning
+y continua el procesamiento sin intentar enviar el correo.
+
 ## Ejecucion
 
 Ejecutar la aplicacion principal:

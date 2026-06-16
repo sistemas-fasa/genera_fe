@@ -5,8 +5,8 @@ from PyQt5.QtWidgets import QApplication
 
 from controladores.ControladorBase import ControladorBase
 from controladores.FE import FEv1
-from controladores.Main import MainController
-from libs.Utiles import envia_correo, DeCodifica
+from controladores.Main import MainController, _email_alerta_fe_from, _email_alerta_fe_to, enviar_correo_alerta_operativa
+from libs.Utiles import DeCodifica
 from modelos.CAEA import CAEA
 from modelos.Encabezado import Encabezado
 from modelos.ModeloBase import ModeloBase
@@ -68,21 +68,23 @@ class InformaCAEAController(ControladorBase):
                         d.errmsg = controlador.errmsg
                         d.motivoobs = controlador.motivoobs
                         d.vencecae = datetime.today()
-                        envia_correo(to_address='oscar@ferreteriaavenida.com.ar',
-                                     from_address='info@ferreteriaavenida.com.ar',
-                                     subject='Error al generar FE',
-                                      message=(
-                                          "Error: {}\n"
-                                          "Motivo/Obs: {}\n\n"
-                                          "XML request:\n{}\n\n"
-                                          "XML response:\n{}"
-                                      ).format(
-                                          DeCodifica(controlador.errmsg or ""),
-                                          DeCodifica(controlador.motivoobs or ""),
-                                          DeCodifica(controlador.xml_request or ""),
-                                          DeCodifica(controlador.xml_response or "")
-                                      ),
-                                      password_email=os.getenv('FASA_ERROR_EMAIL_PASSWORD') or os.getenv('SMTP_PASSWORD', ''))
+                        enviar_correo_alerta_operativa(
+                            to_address=_email_alerta_fe_to(),
+                            from_address=_email_alerta_fe_from(),
+                            subject='Error al generar FE',
+                            message=(
+                                "Error: {}\n"
+                                "Motivo/Obs: {}\n\n"
+                                "XML request:\n{}\n\n"
+                                "XML response:\n{}"
+                            ).format(
+                                DeCodifica(controlador.errmsg or ""),
+                                DeCodifica(controlador.motivoobs or ""),
+                                DeCodifica(controlador.xml_request or ""),
+                                DeCodifica(controlador.xml_response or "")
+                            ),
+                            password_email=os.getenv('FASA_ERROR_EMAIL_PASSWORD') or os.getenv('SMTP_PASSWORD', '')
+                        )
                     d.save()
             caeaupdate = CAEA.get_by_id(c.idCAEA)
             caeaupdate.estado = 'P'

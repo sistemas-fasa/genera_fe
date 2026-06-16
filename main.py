@@ -27,7 +27,7 @@ from datetime import datetime
 from libs.Utiles import initialize_logger
 
 from controladores.FE import FEv1
-from controladores.Main import MainController
+from controladores.Main import MainController, _email_alerta_fe_from, _email_alerta_fe_to, enviar_correo_alerta_operativa
 from libs.Utiles import LeerIni, FechaMysql, envia_correo, DeCodifica
 from modelos.Encabezado import Encabezado
 
@@ -91,12 +91,14 @@ if __name__ == "__main__":
                     d.errmsg = controlador.errmsg
                     d.motivoobs = controlador.motivoobs
                     d.vencecae = datetime.today()
-                    envia_correo(to_address='enrique@ferreteriaavenida.com.ar',
-                                 from_address='info@ferreteriaavenida.com.ar',
-                                  subject='Error al generar FE',
-                                  message="Error: {} {}".format(DeCodifica(controlador.errmsg),
-                                                                DeCodifica(controlador.motivoobs)),
-                                  password_email=os.getenv('FASA_ERROR_EMAIL_PASSWORD') or os.getenv('SMTP_PASSWORD', ''))
+                    enviar_correo_alerta_operativa(
+                        to_address=_email_alerta_fe_to(),
+                        from_address=_email_alerta_fe_from(),
+                        subject='Error al generar FE',
+                        message="Error: {} {}".format(DeCodifica(controlador.errmsg),
+                                                      DeCodifica(controlador.motivoobs)),
+                        password_email=os.getenv('FASA_ERROR_EMAIL_PASSWORD') or os.getenv('SMTP_PASSWORD', '')
+                    )
                 d.save()
     else:
         inicio()
