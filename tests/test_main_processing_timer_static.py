@@ -83,6 +83,97 @@ def test_ciclo_procesamiento_evita_reentradas_y_conserva_orden_operativo():
     assert positions == sorted(positions)
 
 
+def test_ciclo_no_bloquea_cae_por_dummy_afip_por_defecto(monkeypatch):
+    from controladores.Main import MainController
+    import controladores.Main as main_module
+
+    controller = MainController.__new__(MainController)
+    eventos = []
+
+    monkeypatch.setattr(main_module, "LeerIni", lambda clave=None, key=None: "")
+    controller.lProcesa = True
+    controller._procesando_ciclo = False
+    controller._procesamiento_timer = type(
+        "FakeTimer",
+        (),
+        {"isActive": lambda self: False, "stop": lambda self: None},
+    )()
+    controller.view = type(
+        "FakeView",
+        (),
+        {
+            "btnIniciar": object(),
+            "btnPausar": object(),
+            "lblProcesamiento": type("FakeLabel", (), {"setText": lambda self, text: eventos.append(text)})(),
+        },
+    )()
+
+    controller.VerificarEstadoAFIP = lambda: eventos.append("VerificarEstadoAFIP") or False
+    controller.GeneraCAE = lambda: eventos.append("GeneraCAE")
+    controller.ImpresionFactura = lambda: eventos.append("ImpresionFactura")
+    controller.GeneraCAEA = lambda: eventos.append("GeneraCAEA")
+    controller.EnviaCorreos = lambda: eventos.append("EnviaCorreos")
+    controller._actualizar_estado_operativo_afip = lambda: None
+    controller._actualizar_estado_operativo_emails = lambda: None
+
+    controller._ejecutar_ciclo_procesamiento()
+
+    assert eventos == [
+        "VerificarEstadoAFIP",
+        "GeneraCAE",
+        "ImpresionFactura",
+        "GeneraCAEA",
+        "EnviaCorreos",
+    ]
+
+
+def test_ciclo_bloquea_cae_por_dummy_afip_solo_con_config_explicita(monkeypatch):
+    from controladores.Main import MainController
+    import controladores.Main as main_module
+
+    controller = MainController.__new__(MainController)
+    eventos = []
+
+    def fake_leer_ini(clave=None, key=None):
+        if clave == "bloquear_cae_si_afip_dummy_falla":
+            return "S"
+        return ""
+
+    monkeypatch.setattr(main_module, "LeerIni", fake_leer_ini)
+    controller.lProcesa = True
+    controller._procesando_ciclo = False
+    controller._procesamiento_timer = type(
+        "FakeTimer",
+        (),
+        {"isActive": lambda self: False, "stop": lambda self: None},
+    )()
+    controller.view = type(
+        "FakeView",
+        (),
+        {
+            "btnIniciar": object(),
+            "btnPausar": object(),
+            "lblProcesamiento": type("FakeLabel", (), {"setText": lambda self, text: eventos.append(text)})(),
+        },
+    )()
+
+    controller.VerificarEstadoAFIP = lambda: eventos.append("VerificarEstadoAFIP") or False
+    controller.GeneraCAE = lambda: eventos.append("GeneraCAE")
+    controller.ImpresionFactura = lambda: eventos.append("ImpresionFactura")
+    controller.GeneraCAEA = lambda: eventos.append("GeneraCAEA")
+    controller.EnviaCorreos = lambda: eventos.append("EnviaCorreos")
+    controller._actualizar_estado_operativo_afip = lambda: None
+    controller._actualizar_estado_operativo_emails = lambda: None
+
+    controller._ejecutar_ciclo_procesamiento()
+
+    assert "GeneraCAE" not in eventos
+    assert eventos[0] == "VerificarEstadoAFIP"
+    assert "ImpresionFactura" in eventos
+    assert "GeneraCAEA" in eventos
+    assert "EnviaCorreos" in eventos
+
+
 def test_vista_expone_boton_pausar_para_detener_reanudar():
     view_source = MAIN_VIEW.read_text(encoding="utf-8")
     main_view = _class_def(MAIN_VIEW, "MainView")

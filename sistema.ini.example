@@ -8,6 +8,7 @@ host = 127.0.0.1
 afip_intervalo_verificacion_minutos = 2
 afip_timeout_segundos = 30
 afip_cuit_homologacion = 00000000000
+bloquear_cae_si_afip_dummy_falla = N
 email_admin_notificaciones = admin@example.com
 email_alerta_fe_to = facturacion-alertas@example.com
 email_alerta_fe_from = no-reply@example.com

@@ -15,6 +15,7 @@ import base64
 import json
 import logging
 import os
+import ssl
 import sys
 from os.path import abspath
 
@@ -29,6 +30,22 @@ from pyafipws.wsfev1 import WSFEv1
 
 def _afip_timeout():
     return LeerTimeoutAFIP()
+
+
+def _es_error_transitorio_afip(excepcion):
+    texto = "{} {}".format(excepcion.__class__.__name__, excepcion).lower()
+    indicadores = (
+        "connectionreseterror",
+        "winerror 10054",
+        "connection reset",
+        "eof occurred",
+        "timed out",
+        "timeout",
+        "ssl",
+    )
+    return isinstance(excepcion, (ConnectionResetError, TimeoutError, ssl.SSLError)) or any(
+        indicador in texto for indicador in indicadores
+    )
 
 class FEv1(WSFEv1):
 
@@ -69,23 +86,43 @@ class FEv1(WSFEv1):
     #obtiene el ultimo comprobante autorizado segun el tipo y punto de venta
     @inicializar_y_capturar_excepciones
     def UltimoComprobante(self, tipo=1, ptovta=1):
-        wsdl = self.WSDL
-        print("WSDL {}".format(wsdl))
-        cache = None
-        proxy = ""
-        wrapper = ""  # "pycurl"
-        #cacert = True  # geotrust.crt"
-        # ok = self.Conectar(cache, wsdl, proxy, wrapper, self.cacert)
-        ok = self.Conectar(cache, wsdl, proxy, wrapper, True, timeout=_afip_timeout())
+        intentos = 2
+        ultimo_error = None
 
-        if not ok:
-            raise RuntimeError(self.Excepcion)
+        for intento in range(1, intentos + 1):
+            try:
+                wsdl = self.WSDL
+                print("WSDL {}".format(wsdl))
+                cache = None
+                proxy = ""
+                wrapper = ""  # "pycurl"
+                #cacert = True  # geotrust.crt"
+                # ok = self.Conectar(cache, wsdl, proxy, wrapper, self.cacert)
+                ok = self.Conectar(cache, wsdl, proxy, wrapper, True, timeout=_afip_timeout())
 
-        ta = self.Autenticar()
-        self.SetTicketAcceso(ta)
-        self.Cuit = self.cuit_emisor.decode()
-        ultimo = self.CompUltimoAutorizado(tipo_cbte=tipo, punto_vta=ptovta)
-        return ultimo
+                if not ok:
+                    raise RuntimeError(self.Excepcion)
+
+                ta = self.Autenticar()
+                self.SetTicketAcceso(ta)
+                self.Cuit = self.cuit_emisor.decode()
+                ultimo = self.CompUltimoAutorizado(tipo_cbte=tipo, punto_vta=ptovta)
+                return ultimo
+            except Exception as e:
+                ultimo_error = e
+                if not _es_error_transitorio_afip(e) or intento >= intentos:
+                    break
+                logging.warning(
+                    "AFIP/ARCA corto la conexion al consultar ultimo comprobante. Reintento %s/%s",
+                    intento + 1,
+                    intentos,
+                )
+
+        if _es_error_transitorio_afip(ultimo_error):
+            raise RuntimeError(
+                "AFIP/ARCA corto la conexion al consultar ultimo comprobante. Reintente en unos minutos."
+            ) from ultimo_error
+        raise ultimo_error
 
     @inicializar_y_capturar_excepciones
     def Autenticar(self, *args, **kwargs):

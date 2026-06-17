@@ -12,7 +12,8 @@ from vistas.VistaBase import VistaBase
 class MainView(VistaBase):
 
     def initUi(self):
-        self.setGeometry(150, 150, 650, 450)
+        self.setGeometry(150, 150, 1040, 620)
+        self.setMinimumSize(920, 520)
         self.setWindowTitle('Factura Electronica - Servidor MySql {}'.format(LeerIni(clave='host')))
         self.layoutPpal = QVBoxLayout(self)
         self.lblTitulo = EtiquetaTitulo(texto="{}-{}".format(
@@ -33,6 +34,7 @@ class MainView(VistaBase):
         self.lblAfipAuthServer = Etiqueta(texto='AuthServer: N/D', tamanio=10)
         self.lblAfipUltimaVerificacion = Etiqueta(texto='Ultima verificacion: N/D', tamanio=10)
         self.lblAfipMensaje = Etiqueta(texto='', tamanio=10)
+        self.lblAfipMensaje.setWordWrap(True)
         layoutAfip.addWidget(self.lblAfipEstado)
         layoutAfip.addWidget(self.lblAfipAppServer)
         layoutAfip.addWidget(self.lblAfipDbServer)
@@ -47,6 +49,7 @@ class MainView(VistaBase):
         self.lblEmailsRetrasados = Etiqueta(texto='Retrasados: 0', tamanio=10)
         self.lblEmailsFallidos = Etiqueta(texto='Fallidos: 0', tamanio=10)
         self.lblEmailsMensaje = Etiqueta(texto='', tamanio=10)
+        self.lblEmailsMensaje.setWordWrap(True)
         layoutEmails.addWidget(self.lblEmailsEstado)
         layoutEmails.addWidget(self.lblEmailsPendientes)
         layoutEmails.addWidget(self.lblEmailsRetrasados)
@@ -65,8 +68,16 @@ class MainView(VistaBase):
         ]
         self.gridFacturas.ArmaCabeceras(cabeceras=cabeceras)
         header = self.gridFacturas.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.ResizeToContents)
+        for columna in range(7):
+            header.setSectionResizeMode(columna, QHeaderView.Interactive)
         header.setSectionResizeMode(7, QHeaderView.Stretch)
+        self.gridFacturas.setColumnWidth(0, 80)
+        self.gridFacturas.setColumnWidth(1, 140)
+        self.gridFacturas.setColumnWidth(2, 110)
+        self.gridFacturas.setColumnWidth(3, 80)
+        self.gridFacturas.setColumnWidth(4, 90)
+        self.gridFacturas.setColumnWidth(5, 120)
+        self.gridFacturas.setColumnWidth(6, 110)
         self.gridFacturas.setColumnWidth(7, 260)
         self.layoutPpal.addWidget(self.gridFacturas)
 

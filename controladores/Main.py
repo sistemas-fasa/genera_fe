@@ -213,6 +213,10 @@ class MainController(ControladorBase):
             minutos = 2
         return timedelta(minutes=minutos)
 
+    def _bloquear_cae_si_afip_dummy_falla(self):
+        valor = (LeerIni(clave='bloquear_cae_si_afip_dummy_falla') or 'N').strip().upper()
+        return valor == 'S'
+
     def _destinatarios_alerta_afip(self):
         destinatario = _normalizar_texto_config(
             LeerIni(clave='afip_alerta_to') or _email_admin_notificaciones()
@@ -417,7 +421,7 @@ class MainController(ControladorBase):
         # hay_internet = True
         try:
             afip_online = self.VerificarEstadoAFIP()
-            if afip_online:
+            if afip_online or not self._bloquear_cae_si_afip_dummy_falla():
                 self.GeneraCAE() #si tenemos internet obtenemos CAE
             else:
                 self.view.lblProcesamiento.setText("AFIP no disponible. Reintentando...")
