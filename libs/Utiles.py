@@ -54,6 +54,7 @@ from os.path import join
 from sys import argv
 
 from libs import Ventanas
+from libs.Avisos import mostrar_error, traducir_excepcion
 
 #necesario porque en mysql tengo definido el campo boolean como bit
 
@@ -163,8 +164,8 @@ def inicializar_y_capturar_excepciones(func):
             ex = traceback.format_exception( sys.exc_info()[0], sys.exc_info()[1], sys.exc_info()[2])
             self.Traceback = ''.join(ex)
             self.Excepcion = traceback.format_exception_only( sys.exc_info()[0], sys.exc_info()[1])[0]
-            logging.debug(self.Traceback)
-            Ventanas.showMsgAutoClose("Error", "Se ha producido un error \n{}".format(self.Excepcion))
+            logging.exception("Error capturado en %s", func.__name__)
+            mostrar_error("Error", traducir_excepcion(e), detalle_tecnico=e)
             if self.LanzarExcepciones:
                 raise
         finally:

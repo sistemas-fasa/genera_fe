@@ -4,10 +4,10 @@ from concurrent.futures import ThreadPoolExecutor
 import os
 import traceback
 import logging
-import time
 from datetime import datetime, timedelta
 
 import peewee
+from PyQt5.QtCore import QTimer
 from PyQt5.QtWidgets import QApplication
 from peewee import fn
 
@@ -20,6 +20,7 @@ from controladores.ImpresionComprobantes import ImpresionComprobantesController
 from controladores.WSConstComp import WSConstComp
 from libs.Utiles import LeerIni, FechaMysql, DeCodifica, inicializar_y_capturar_excepciones, desencriptar, \
     check_url
+from libs.Avisos import mostrar_error, traducir_excepcion
 from modelos.CAEA import CAEA
 from modelos.CUIT import CUIT
 from modelos.CbteRelacionado import CbteRel
@@ -113,6 +114,11 @@ class MainController(ControladorBase):
         super(MainController, self).__init__()
         self.view = MainView()
         self.view.initUi()
+        self.lProcesa = False
+        self._procesando_ciclo = False
+        self._procesamiento_timer = QTimer(self.view)
+        self._procesamiento_timer.setInterval(500)
+        self._procesamiento_timer.timeout.connect(self._ejecutar_ciclo_procesamiento)
         self.conectarWidgets()
         self.model = ModeloBase()
         self.model.getDb()
@@ -182,6 +188,7 @@ class MainController(ControladorBase):
     def conectarWidgets(self):
         self.view.btnCerrar.clicked.connect(self.Cerrar)
         self.view.btnIniciar.clicked.connect(self.GeneraFE)
+        self.view.btnPausar.clicked.connect(self.PausarProcesamiento)
         self.view.btnToggleEmails.clicked.connect(self.ToggleEnvioEmails)
         self._actualizar_boton_emails()
 
@@ -209,6 +216,8 @@ class MainController(ControladorBase):
 
     def Cerrar(self):
         self.lProcesa = False
+        if self._procesamiento_timer.isActive():
+            self._procesamiento_timer.stop()
         try:
             self._email_executor.shutdown(wait=False, cancel_futures=True)
         except Exception:
@@ -217,11 +226,37 @@ class MainController(ControladorBase):
 
     @inicializar_y_capturar_excepciones
     def GeneraFE(self, *args, **kwargs):
+        if self._procesamiento_timer.isActive():
+            return
+
+        self.lProcesa = True
         self.view.btnIniciar.setEnabled(False)
+        self.view.btnPausar.setEnabled(True)
+        self.view.btnPausar.setText('Pausar')
+        self.view.lblProcesamiento.setText("Procesamiento iniciado")
+        self._procesamiento_timer.start()
+        QTimer.singleShot(0, self._ejecutar_ciclo_procesamiento)
+
+    def PausarProcesamiento(self):
+        if self._procesamiento_timer.isActive():
+            self.lProcesa = False
+            self._procesamiento_timer.stop()
+            self.view.btnIniciar.setEnabled(True)
+            self.view.btnPausar.setText('Reanudar')
+            self.view.lblProcesamiento.setText("Procesamiento pausado")
+            return
+
+        self.GeneraFE()
+
+    @inicializar_y_capturar_excepciones
+    def _ejecutar_ciclo_procesamiento(self):
+        if not self.lProcesa or self._procesando_ciclo:
+            return
+
+        self._procesando_ciclo = True
         #hay_internet = check_url('http://www.google.com.ar')
         # hay_internet = True
-        while self.lProcesa:
-            QApplication.processEvents()
+        try:
             afip_online = self.VerificarEstadoAFIP()
             if afip_online:
                 self.GeneraCAE() #si tenemos internet obtenemos CAE
@@ -232,7 +267,17 @@ class MainController(ControladorBase):
             # self.Constatacion()
             # self.ObtieneDatosCUIT()
             self.EnviaCorreos()
-            time.sleep(0.5)
+        except Exception as e:
+            logging.exception("Error procesando ciclo principal")
+            self.lProcesa = False
+            if self._procesamiento_timer.isActive():
+                self._procesamiento_timer.stop()
+            self.view.btnIniciar.setEnabled(True)
+            self.view.btnPausar.setEnabled(False)
+            self.view.lblProcesamiento.setText("Procesamiento detenido por error")
+            mostrar_error("Error", traducir_excepcion(e), detalle_tecnico=e)
+        finally:
+            self._procesando_ciclo = False
 
     def _estado_dummy_afip(self):
         estados = {

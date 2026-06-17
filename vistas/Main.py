@@ -34,9 +34,12 @@ class MainView(VistaBase):
 
         self.btnCerrar = BotonCerrarFormulario()
         self.btnIniciar = Boton(texto='Iniciar', imagen='imagenes/Accept.png')
+        self.btnPausar = Boton(texto='Pausar', imagen='imagenes/Stop.png')
+        self.btnPausar.setEnabled(False)
         self.btnToggleEmails = Boton(texto='Emails: ACTIVO', imagen='imagenes/Accept.png')
         layoutBotones = QHBoxLayout()
         layoutBotones.addWidget(self.btnIniciar)
+        layoutBotones.addWidget(self.btnPausar)
         layoutBotones.addWidget(self.btnToggleEmails)
         layoutBotones.addWidget(self.btnCerrar)
 

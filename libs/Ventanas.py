@@ -2,29 +2,14 @@
 import sys
 
 from PyQt5.QtWidgets import QMessageBox
+from libs import Avisos
 
 
 def showAlert(titulo, mensaje):
-
-    msg = QMessageBox()
-    msg.setIcon(QMessageBox.Information)
-    msg.setText(mensaje)
-    msg.setWindowTitle(titulo)
-    msg.setStandardButtons(QMessageBox.Ok)
-
-    retval = msg.exec_()
-
-    return retval
+    return Avisos.mostrar_info(titulo, mensaje)
 
 def showConfirmation(titulo, mensaje):
-    msg = QMessageBox()
-    msg.setIcon(QMessageBox.Question)
-    msg.setText(mensaje)
-    msg.setWindowTitle(titulo)
-    msg.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
-    retval = msg.exec_()
-
-    return retval
+    return Avisos.confirmar_accion(titulo, mensaje)
 
 
 def showMsgAutoClose(titulo, mensaje):
