@@ -1,5 +1,5 @@
 # coding=utf-8
-from PyQt5.QtWidgets import QVBoxLayout, QHBoxLayout
+from PyQt5.QtWidgets import QVBoxLayout, QHBoxLayout, QGroupBox
 
 from libs.BarraProgreso import Avance
 from libs.Botones import BotonCerrarFormulario, Boton
@@ -24,6 +24,39 @@ class MainView(VistaBase):
 
         self.lblProcesamiento = Etiqueta()
         self.layoutPpal.addWidget(self.lblProcesamiento)
+
+        self.grpAfip = QGroupBox('Estado AFIP')
+        layoutAfip = QVBoxLayout(self.grpAfip)
+        self.lblAfipEstado = Etiqueta(texto='AFIP: Sin verificar', tamanio=10)
+        self.lblAfipAppServer = Etiqueta(texto='AppServer: N/D', tamanio=10)
+        self.lblAfipDbServer = Etiqueta(texto='DbServer: N/D', tamanio=10)
+        self.lblAfipAuthServer = Etiqueta(texto='AuthServer: N/D', tamanio=10)
+        self.lblAfipUltimaVerificacion = Etiqueta(texto='Ultima verificacion: N/D', tamanio=10)
+        self.lblAfipMensaje = Etiqueta(texto='', tamanio=10)
+        layoutAfip.addWidget(self.lblAfipEstado)
+        layoutAfip.addWidget(self.lblAfipAppServer)
+        layoutAfip.addWidget(self.lblAfipDbServer)
+        layoutAfip.addWidget(self.lblAfipAuthServer)
+        layoutAfip.addWidget(self.lblAfipUltimaVerificacion)
+        layoutAfip.addWidget(self.lblAfipMensaje)
+
+        self.grpEmails = QGroupBox('Estado emails')
+        layoutEmails = QVBoxLayout(self.grpEmails)
+        self.lblEmailsEstado = Etiqueta(texto='Emails: ACTIVO', tamanio=10)
+        self.lblEmailsPendientes = Etiqueta(texto='Pendientes: 0', tamanio=10)
+        self.lblEmailsRetrasados = Etiqueta(texto='Retrasados: 0', tamanio=10)
+        self.lblEmailsFallidos = Etiqueta(texto='Fallidos: 0', tamanio=10)
+        self.lblEmailsMensaje = Etiqueta(texto='', tamanio=10)
+        layoutEmails.addWidget(self.lblEmailsEstado)
+        layoutEmails.addWidget(self.lblEmailsPendientes)
+        layoutEmails.addWidget(self.lblEmailsRetrasados)
+        layoutEmails.addWidget(self.lblEmailsFallidos)
+        layoutEmails.addWidget(self.lblEmailsMensaje)
+
+        layoutEstados = QHBoxLayout()
+        layoutEstados.addWidget(self.grpAfip)
+        layoutEstados.addWidget(self.grpEmails)
+        self.layoutPpal.addLayout(layoutEstados)
 
         self.gridFacturas = Grilla()
         cabeceras = [

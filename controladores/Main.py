@@ -122,6 +122,8 @@ class MainController(ControladorBase):
         self.conectarWidgets()
         self.model = ModeloBase()
         self.model.getDb()
+        self._actualizar_estado_operativo_afip()
+        self._actualizar_estado_operativo_emails()
         self.afip_intervalo_verificacion = self._leer_intervalo_verificacion_afip()
         self._email_executor = ThreadPoolExecutor(max_workers=5)
         self._email_futures = {}
@@ -204,11 +206,102 @@ class MainController(ControladorBase):
             self.view.btnToggleEmails.setText('Emails: PAUSADO')
             self.view.btnToggleEmails.setStyleSheet('background-color: #e67e22; color: white;')
 
+    def _formatear_fecha_hora_estado(self, fecha):
+        if not fecha:
+            return 'N/D'
+        try:
+            return fecha.strftime('%d/%m/%Y %H:%M:%S')
+        except AttributeError:
+            return str(fecha)
+
+    def _actualizar_estado_operativo_afip(self):
+        estados = self.afip_estados or {}
+        disponible = self.afip_disponible
+
+        if disponible is None:
+            estado_texto = 'AFIP: Sin verificar'
+            color = '#7f8c8d'
+            mensaje = ''
+        elif disponible:
+            estado_texto = 'AFIP: Disponible'
+            color = '#1e8449'
+            mensaje = ''
+        else:
+            estado_texto = 'AFIP: No disponible'
+            color = '#c0392b'
+            mensaje = 'AFIP caido: se reintentara y se usara CAEA cuando corresponda.'
+
+        self.view.lblAfipEstado.setText(estado_texto)
+        self.view.lblAfipEstado.setStyleSheet('color: {}; font-weight: bold;'.format(color))
+        self.view.lblAfipAppServer.setText('AppServer: {}'.format(estados.get('AppServer') or 'N/D'))
+        self.view.lblAfipDbServer.setText('DbServer: {}'.format(estados.get('DbServer') or 'N/D'))
+        self.view.lblAfipAuthServer.setText('AuthServer: {}'.format(estados.get('AuthServer') or 'N/D'))
+        self.view.lblAfipUltimaVerificacion.setText(
+            'Ultima verificacion: {}'.format(self._formatear_fecha_hora_estado(self.afip_ultima_verificacion))
+        )
+        self.view.lblAfipMensaje.setText(mensaje)
+        self.view.lblAfipMensaje.setStyleSheet('color: #c0392b; font-weight: bold;' if mensaje else '')
+
+    def _resumen_estado_emails(self):
+        resumen = {
+            'pendientes': 0,
+            'retrasados': 0,
+            'fallidos': 0,
+            'ultimo_error': ''
+        }
+        try:
+            resumen['pendientes'] = EmailPendiente.select().where(
+                EmailPendiente.estado == 'pendiente'
+            ).count()
+            resumen['retrasados'] = EmailPendiente.select().where(
+                EmailPendiente.estado == 'retrasado'
+            ).count()
+            resumen['fallidos'] = EmailPendiente.select().where(
+                EmailPendiente.estado == 'fallido'
+            ).count()
+            ultimo_con_error = EmailPendiente.select().where(
+                (EmailPendiente.ultimo_error.is_null(False)) &
+                (EmailPendiente.ultimo_error != '')
+            ).order_by(EmailPendiente.id.desc()).first()
+            if ultimo_con_error:
+                resumen['ultimo_error'] = (ultimo_con_error.ultimo_error or '').splitlines()[0][:180]
+        except Exception:
+            logging.exception("No se pudo consultar el estado operativo de emails")
+            resumen['ultimo_error'] = 'No se pudo consultar la cola de emails'
+        return resumen
+
+    def _actualizar_estado_operativo_emails(self):
+        activo = self._envio_emails_activo()
+        resumen = self._resumen_estado_emails()
+
+        if activo:
+            self.view.lblEmailsEstado.setText('Emails: Activo')
+            self.view.lblEmailsEstado.setStyleSheet('color: #1e8449; font-weight: bold;')
+        else:
+            self.view.lblEmailsEstado.setText('Emails: Pausado')
+            self.view.lblEmailsEstado.setStyleSheet('color: #e67e22; font-weight: bold;')
+
+        self.view.lblEmailsPendientes.setText('Pendientes: {}'.format(resumen['pendientes']))
+        self.view.lblEmailsRetrasados.setText('Retrasados: {}'.format(resumen['retrasados']))
+        self.view.lblEmailsFallidos.setText('Fallidos: {}'.format(resumen['fallidos']))
+
+        mensaje = ''
+        if resumen['fallidos']:
+            mensaje = 'Hay emails fallidos. Ultimo error: {}'.format(resumen['ultimo_error'] or 'ver detalle en cola')
+        elif resumen['ultimo_error'] and ('smtp' in resumen['ultimo_error'].lower() or 'servidor' in resumen['ultimo_error'].lower()):
+            mensaje = 'Alerta SMTP: {}'.format(resumen['ultimo_error'])
+        elif not activo:
+            mensaje = 'Envio de emails pausado: los pendientes se acumularan.'
+
+        self.view.lblEmailsMensaje.setText(mensaje)
+        self.view.lblEmailsMensaje.setStyleSheet('color: #c0392b; font-weight: bold;' if mensaje else '')
+
     def ToggleEnvioEmails(self):
         activo = self._envio_emails_activo()
         nuevo_valor = 'N' if activo else 'S'
         ParamSist.GuardarParametro('ENVIO_EMAILS_ACTIVO', nuevo_valor)
         self._actualizar_boton_emails()
+        self._actualizar_estado_operativo_emails()
         if nuevo_valor == 'S':
             logging.info("✅ Envío de emails activado - se procesarán los correos pendientes")
         else:
@@ -277,6 +370,8 @@ class MainController(ControladorBase):
             self.view.lblProcesamiento.setText("Procesamiento detenido por error")
             mostrar_error("Error", traducir_excepcion(e), detalle_tecnico=e)
         finally:
+            self._actualizar_estado_operativo_afip()
+            self._actualizar_estado_operativo_emails()
             self._procesando_ciclo = False
 
     def _estado_dummy_afip(self):
@@ -361,6 +456,7 @@ class MainController(ControladorBase):
     def VerificarEstadoAFIP(self):
         ahora = datetime.now()
         if self.afip_ultima_verificacion and (ahora - self.afip_ultima_verificacion) < self.afip_intervalo_verificacion:
+            self._actualizar_estado_operativo_afip()
             return self.afip_disponible if self.afip_disponible is not None else True
 
         disponible, estados = self._estado_dummy_afip()
@@ -390,6 +486,7 @@ class MainController(ControladorBase):
         self.afip_disponible = disponible
 
         self.afip_ultima_verificacion = ahora
+        self._actualizar_estado_operativo_afip()
         return self.afip_disponible if self.afip_disponible is not None else True
 
     def CreaFE(self, d, caea = None):
@@ -913,6 +1010,7 @@ class MainController(ControladorBase):
             
     def EnviaCorreos(self):
         if not self._envio_emails_activo():
+            self._actualizar_estado_operativo_emails()
             return
 
         reactivar_emails_retrasados()
@@ -925,6 +1023,8 @@ class MainController(ControladorBase):
                 except Exception:
                     logging.exception(f"Error en tarea de envío de email ID {email_id}")
                 self._email_futures.pop(email_id, None)
+
+        self._actualizar_estado_operativo_emails()
 
         # Obtener correos pendientes que no estén siendo procesados actualmente
         # y que no tengan un timestamp de procesamiento reciente (últimos 5 minutos)
@@ -941,10 +1041,12 @@ class MainController(ControladorBase):
             self.view.gridFacturas.removeRow(0)
 
         if not ids_pendientes:
+            self._actualizar_estado_operativo_emails()
             return
 
         ids_a_enviar = [email_id for email_id in ids_pendientes if email_id not in self._email_futures]
         if not ids_a_enviar:
+            self._actualizar_estado_operativo_emails()
             return
 
         logging.info(f"Encontrados {len(ids_pendientes)} correos pendientes. Encolando {len(ids_a_enviar)} nuevos.")
@@ -955,3 +1057,4 @@ class MainController(ControladorBase):
         # Ejecutar en paralelo reutilizando un único pool para evitar crear hilos/conexiones sin control
         for email_id in ids_a_enviar:
             self._email_futures[email_id] = self._email_executor.submit(enviar_email_en_hilo, email_id)
+        self._actualizar_estado_operativo_emails()
