@@ -1,5 +1,5 @@
 # coding=utf-8
-from PyQt5.QtWidgets import QVBoxLayout, QHBoxLayout, QGroupBox
+from PyQt5.QtWidgets import QVBoxLayout, QHBoxLayout, QGroupBox, QHeaderView
 
 from libs.BarraProgreso import Avance
 from libs.Botones import BotonCerrarFormulario, Boton
@@ -60,9 +60,14 @@ class MainView(VistaBase):
 
         self.gridFacturas = Grilla()
         cabeceras = [
-            'Pto Vta', 'Comprobante', 'CAE', 'Vence Cae', 'Errores'
+            'Hora', 'Estado', 'Punto de venta', 'Tipo', 'Numero',
+            'CAE / CAEA', 'Vencimiento', 'Mensaje / error'
         ]
         self.gridFacturas.ArmaCabeceras(cabeceras=cabeceras)
+        header = self.gridFacturas.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(7, QHeaderView.Stretch)
+        self.gridFacturas.setColumnWidth(7, 260)
         self.layoutPpal.addWidget(self.gridFacturas)
 
         self.btnCerrar = BotonCerrarFormulario()
@@ -70,10 +75,12 @@ class MainView(VistaBase):
         self.btnPausar = Boton(texto='Pausar', imagen='imagenes/Stop.png')
         self.btnPausar.setEnabled(False)
         self.btnToggleEmails = Boton(texto='Emails: ACTIVO', imagen='imagenes/Accept.png')
+        self.btnDiagnostico = Boton(texto='Estado del sistema', imagen='imagenes/buscar.png')
         layoutBotones = QHBoxLayout()
         layoutBotones.addWidget(self.btnIniciar)
         layoutBotones.addWidget(self.btnPausar)
         layoutBotones.addWidget(self.btnToggleEmails)
+        layoutBotones.addWidget(self.btnDiagnostico)
         layoutBotones.addWidget(self.btnCerrar)
 
         self.layoutPpal.addLayout(layoutBotones)

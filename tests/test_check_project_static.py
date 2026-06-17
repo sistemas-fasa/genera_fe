@@ -99,3 +99,48 @@ def test_check_project_promotes_local_warnings_to_production_errors():
 
     assert "warn_or_error" in source
     assert "production" in source
+
+
+def test_check_project_exposes_structured_diagnostic_results_without_secrets():
+    import check_project
+
+    results = check_project.collect_diagnostic_results()
+
+    assert results
+    assert all(result.nivel in {"OK", "WARN", "ERROR"} for result in results)
+    assert all(result.mensaje for result in results)
+
+    expected_messages = [
+        "Python detectado",
+        "Modo",
+        "Host de base de datos",
+        "Base configurada",
+        "sistema.ini",
+        ".env",
+        "Certificados",
+        "PyAfipWs",
+        "SMTP",
+        "Estado AFIP",
+        "Ruta de logs",
+    ]
+    messages = "\n".join(result.mensaje for result in results)
+    for expected in expected_messages:
+        assert expected in messages
+
+    visible_text = "\n".join(
+        "{}\n{}".format(result.mensaje, result.detalle) for result in results
+    ).lower()
+    forbidden_terms = ["password", "privatekey", "token", "sign"]
+    for term in forbidden_terms:
+        assert term not in visible_text
+
+
+def test_main_view_has_diagnostic_button_and_controller_opens_panel():
+    main_view_source = read_text("vistas/Main.py")
+    main_controller_source = read_text("controladores/Main.py")
+
+    assert "btnDiagnostico" in main_view_source
+    assert "Estado del sistema" in main_view_source
+    assert "AbrirDiagnostico" in main_controller_source
+    assert "PanelDiagnostico" in main_controller_source
+    assert "btnDiagnostico.clicked.connect(self.AbrirDiagnostico)" in main_controller_source

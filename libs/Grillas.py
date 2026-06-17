@@ -66,6 +66,9 @@ class Grilla(QTableWidget):
         font.setPointSizeF(self.tamanio)
         self.setFont(font)
         self.setSortingEnabled(True)
+        self.setWordWrap(True)
+        self.setAlternatingRowColors(True)
+        self.verticalHeader().setVisible(False)
 
     def ArmaCabeceras(self, cabeceras=None):
 

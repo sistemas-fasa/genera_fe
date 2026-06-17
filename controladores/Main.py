@@ -7,7 +7,9 @@ import logging
 from datetime import datetime, timedelta
 
 import peewee
+from check_project import collect_diagnostic_results
 from PyQt5.QtCore import QTimer
+from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import QApplication
 from peewee import fn
 
@@ -21,6 +23,7 @@ from controladores.WSConstComp import WSConstComp
 from libs.Utiles import LeerIni, FechaMysql, DeCodifica, inicializar_y_capturar_excepciones, desencriptar, \
     check_url
 from libs.Avisos import mostrar_error, traducir_excepcion
+from libs.PanelDiagnostico import PanelDiagnostico
 from modelos.CAEA import CAEA
 from modelos.CUIT import CUIT
 from modelos.CbteRelacionado import CbteRel
@@ -89,6 +92,64 @@ def enviar_correo_alerta_operativa(to_address, from_address, subject, message, p
         quien_envia=_normalizar_texto_config(from_address) or None
     )
     return True
+
+
+def _normalizar_estado_grilla(estado='', mensaje=''):
+    estado_normalizado = _normalizar_texto_config(estado).upper()
+    mensaje_normalizado = _normalizar_texto_config(mensaje).upper()
+
+    if estado_normalizado in ('A', 'AUTORIZADO', 'OK'):
+        return 'Autorizado'
+    if estado_normalizado in ('O', 'OBSERVADO', 'OBSERVADA', 'REINTENTO'):
+        return 'Observado / reintento'
+    if estado_normalizado in ('R', 'RECHAZADO', 'RECHAZADA'):
+        return 'Rechazado'
+    if estado_normalizado in ('E', 'ERROR') or mensaje_normalizado.startswith('ERROR'):
+        return 'Error'
+    return 'Pendiente'
+
+
+def _color_estado_grilla(estado='', mensaje=''):
+    estado_normalizado = _normalizar_estado_grilla(estado, mensaje)
+    if estado_normalizado == 'Autorizado':
+        return QColor(221, 244, 223)
+    if estado_normalizado == 'Observado / reintento':
+        return QColor(255, 242, 204)
+    if estado_normalizado in ('Rechazado', 'Error'):
+        return QColor(255, 218, 214)
+    return QColor(232, 234, 237)
+
+
+def _formatea_fecha_grilla(valor):
+    if not valor:
+        return ''
+    if isinstance(valor, datetime):
+        return valor.strftime('%d/%m/%Y')
+    if hasattr(valor, 'strftime'):
+        return valor.strftime('%d/%m/%Y')
+    texto = _normalizar_texto_config(valor)
+    if len(texto) == 8 and texto.isdigit():
+        return '{}/{}/{}'.format(texto[6:8], texto[4:6], texto[:4])
+    return texto
+
+
+def _item_grilla_comprobante(punto_vta='', tipo='', numero='', codigo_aut='',
+                             vencimiento='', mensaje='', estado='', hora=None):
+    estado_visible = _normalizar_estado_grilla(estado, mensaje)
+    hora_visible = hora or datetime.now()
+    if isinstance(hora_visible, datetime):
+        hora_visible = hora_visible.strftime('%H:%M:%S')
+
+    return [
+        _normalizar_texto_config(hora_visible),
+        estado_visible,
+        _normalizar_texto_config(punto_vta),
+        _normalizar_texto_config(tipo),
+        _normalizar_texto_config(numero),
+        _normalizar_texto_config(codigo_aut),
+        _formatea_fecha_grilla(vencimiento),
+        _normalizar_texto_config(mensaje),
+    ]
 
 
 class MainController(ControladorBase):
@@ -192,7 +253,12 @@ class MainController(ControladorBase):
         self.view.btnIniciar.clicked.connect(self.GeneraFE)
         self.view.btnPausar.clicked.connect(self.PausarProcesamiento)
         self.view.btnToggleEmails.clicked.connect(self.ToggleEnvioEmails)
+        self.view.btnDiagnostico.clicked.connect(self.AbrirDiagnostico)
         self._actualizar_boton_emails()
+
+    def AbrirDiagnostico(self):
+        panel = PanelDiagnostico(collect_diagnostic_results(), parent=self.view)
+        panel.exec_()
 
     def _envio_emails_activo(self):
         return ParamSist.ObtenerParametro('ENVIO_EMAILS_ACTIVO', 'S').strip().upper() != 'N'
@@ -681,32 +747,48 @@ class MainController(ControladorBase):
             self.xml_response = wsfev1.xml_response
             self.xml_request = wsfev1.xml_request
             ok = False
-            item = [
-                punto_vta, '', '', '', f'{wsfev1.ErrMsg} - {wsfev1.Obs}'
-            ]
+            item = _item_grilla_comprobante(
+                punto_vta=punto_vta,
+                tipo=tipo_cbte,
+                numero=cbt_desde,
+                mensaje=f'{wsfev1.ErrMsg} - {wsfev1.Obs}',
+                estado='E'
+            )
         else:
             if wsfev1.Resultado == 'R':
                 #Ventanas.showAlert("Sistema", "Motivo de rechazo {}".format(wsfev1.Obs))
                 self.xml_response = wsfev1.xml_response
                 self.xml_request = wsfev1.xml_request
                 self.motivoobs = wsfev1.Obs
-                item = [
-                    punto_vta, '', '', '', wsfev1.Obs
-                ]
+                item = _item_grilla_comprobante(
+                    punto_vta=punto_vta,
+                    tipo=tipo_cbte,
+                    numero=cbt_desde,
+                    mensaje=wsfev1.Obs,
+                    estado='R'
+                )
                 ok = False
             else:
                 self.cae = cae
                 self.vencecae = wsfev1.Vencimiento
                 self.comprobante = cbt_desde
-                item = [
-                    punto_vta, str(cbt_desde).zfill(8), cae, wsfev1.Vencimiento, ''
-                ]
+                item = _item_grilla_comprobante(
+                    punto_vta=punto_vta,
+                    tipo=tipo_cbte,
+                    numero=str(cbt_desde).zfill(8),
+                    codigo_aut=cae,
+                    vencimiento=wsfev1.Vencimiento,
+                    estado=wsfev1.Resultado
+                )
                 print("Vencimiento cae {}".format(wsfev1.Vencimiento))
 
         if self.view.gridFacturas.rowCount() > 10:
             self.view.gridFacturas.removeRow(0)
 
-        self.view.gridFacturas.AgregaItem(items=item)
+        self.view.gridFacturas.AgregaItem(
+            items=item,
+            backgroundColor=_color_estado_grilla(item[1], item[7])
+        )
         return ok
 
     def ObtieneCAEA(self):
@@ -828,13 +910,21 @@ class MainController(ControladorBase):
                 d.vencecae = datacaea.fchtopeinf
                 d.resultado = 'A'
                 d.save()
-                item = [
-                    d.puntovta, d.cbtenro, d.cae, d.vencecae, ''
-                ]
+                item = _item_grilla_comprobante(
+                    punto_vta=d.puntovta,
+                    tipo=d.tipocbte,
+                    numero=d.cbtenro,
+                    codigo_aut=d.cae,
+                    vencimiento=d.vencecae,
+                    estado=d.resultado
+                )
                 if self.view.gridFacturas.rowCount() > 10:
                     self.view.gridFacturas.removeRow(0)
 
-                self.view.gridFacturas.AgregaItem(items=item)
+                self.view.gridFacturas.AgregaItem(
+                    items=item,
+                    backgroundColor=_color_estado_grilla(d.resultado)
+                )
             except CAEA.DoesNotExist:
                 d.resultado = 'E'
                 d.errmsg = 'No existe CAEA para el periodo y orden'
@@ -909,13 +999,22 @@ class MainController(ControladorBase):
                 d.resultado = 'A'
                 d.obs = 'No se estan validando los datos debido a los parametros establecidos'
                 d.listo = False
-            item = [
-                d.ptovta, d.cbtenro, d.codaut, d.fechacbte, 'Constatacion'
-            ]
+            item = _item_grilla_comprobante(
+                punto_vta=d.ptovta,
+                tipo=d.cbtetipo,
+                numero=d.cbtenro,
+                codigo_aut=d.codaut,
+                vencimiento=d.fechacbte,
+                mensaje='Constatacion',
+                estado=d.resultado
+            )
             if self.view.gridFacturas.rowCount() > 10:
                 self.view.gridFacturas.removeRow(0)
 
-            self.view.gridFacturas.AgregaItem(items=item)
+            self.view.gridFacturas.AgregaItem(
+                items=item,
+                backgroundColor=_color_estado_grilla(d.resultado, 'Constatacion')
+            )
             d.save()
 
     def ObtieneDatosCUIT(self):
@@ -925,12 +1024,17 @@ class MainController(ControladorBase):
             CUIT.resultado == ''
         )
         for cuit in cuit_consultar:
-            item = [
-                cuit.cuit_consultado, '', '', '', 'Consulta CUIT'
-            ]
+            item = _item_grilla_comprobante(
+                numero=cuit.cuit_consultado,
+                mensaje='Consulta CUIT',
+                estado='P'
+            )
             if self.view.gridFacturas.rowCount() > 10:
                 self.view.gridFacturas.removeRow(0)
-            self.view.gridFacturas.AgregaItem(items=item)
+            self.view.gridFacturas.AgregaItem(
+                items=item,
+                backgroundColor=_color_estado_grilla('P', 'Consulta CUIT')
+            )
             if ParamSist.ObtenerParametro("CONSULTA_CUIT") == "S":
                 padron = PadronAfip()
                 padron.Cuit = cuit.empresa.cuit
@@ -1001,12 +1105,18 @@ class MainController(ControladorBase):
             except Exception as e:
                 f.error = "Error: {}".format(e)
                 f.save()
-            item = [
-                '', '', f.razon_social, '', 'Genera Comprobante'
-            ]
+            item = _item_grilla_comprobante(
+                numero=getattr(f, 'nrelacion', ''),
+                codigo_aut=f.razon_social,
+                mensaje='Genera Comprobante',
+                estado='P'
+            )
             if self.view.gridFacturas.rowCount() > 10:
                 self.view.gridFacturas.removeRow(0)
-            self.view.gridFacturas.AgregaItem(item)
+            self.view.gridFacturas.AgregaItem(
+                items=item,
+                backgroundColor=_color_estado_grilla('P', 'Genera Comprobante')
+            )
             
     def EnviaCorreos(self):
         if not self._envio_emails_activo():
@@ -1050,9 +1160,14 @@ class MainController(ControladorBase):
             return
 
         logging.info(f"Encontrados {len(ids_pendientes)} correos pendientes. Encolando {len(ids_a_enviar)} nuevos.")
-        self.view.gridFacturas.AgregaItem(items=[
-            '', '', f'Enviando {len(ids_a_enviar)} correos pendientes...', '', ''
-        ])
+        item = _item_grilla_comprobante(
+            mensaje=f'Enviando {len(ids_a_enviar)} correos pendientes...',
+            estado='P'
+        )
+        self.view.gridFacturas.AgregaItem(
+            items=item,
+            backgroundColor=_color_estado_grilla('P', item[7])
+        )
 
         # Ejecutar en paralelo reutilizando un único pool para evitar crear hilos/conexiones sin control
         for email_id in ids_a_enviar:

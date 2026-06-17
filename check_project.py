@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import argparse
 import configparser
+from dataclasses import dataclass
 import importlib.util
+import os
 import re
 import sys
 from pathlib import Path
@@ -108,21 +110,35 @@ PRODUCTION_REQUIRED_KEYS = {
 }
 
 
+@dataclass
+class DiagnosticResult:
+    nivel: str
+    mensaje: str
+    detalle: str = ""
+
+
 class Report:
-    def __init__(self) -> None:
+    def __init__(self, print_output: bool = True) -> None:
         self.warning_count = 0
         self.error_count = 0
+        self.print_output = print_output
+        self.results: list[DiagnosticResult] = []
+
+    def _emit(self, nivel: str, message: str, detalle: str = "") -> None:
+        self.results.append(DiagnosticResult(nivel=nivel, mensaje=message, detalle=detalle))
+        if self.print_output:
+            print(f"[{nivel}] {message}")
 
     def ok(self, message: str) -> None:
-        print(f"[OK] {message}")
+        self._emit("OK", message)
 
     def warn(self, message: str) -> None:
         self.warning_count += 1
-        print(f"[WARN] {message}")
+        self._emit("WARN", message)
 
     def error(self, message: str) -> None:
         self.error_count += 1
-        print(f"[ERROR] {message}")
+        self._emit("ERROR", message)
 
     def warn_or_error(self, condition: bool, message: str, production: bool = False) -> None:
         if condition:
@@ -159,6 +175,19 @@ def config_key_label(section: str, key: str) -> str:
     if is_sensitive_name(key):
         return f"clave sensible en [{section}]"
     return f"clave [{section}] {key}"
+
+
+def read_config_silently() -> configparser.ConfigParser | None:
+    config_path = ROOT / "sistema.ini"
+    if not config_path.exists():
+        return None
+
+    parser = configparser.ConfigParser()
+    try:
+        parser.read(config_path, encoding="utf-8")
+    except configparser.Error:
+        return None
+    return parser
 
 
 def is_repo_checkout() -> bool:
@@ -506,6 +535,116 @@ def check_operational_paths(
         report.ok("iniciosistema existe")
     else:
         report.warn_or_error(False, "iniciosistema no existe o no se puede resolver", production=production)
+
+
+def _nivel_existe(path: Path, requerido: bool = False) -> str:
+    if path.exists():
+        return "OK"
+    return "ERROR" if requerido else "WARN"
+
+
+def _resultado_archivo(nombre: str, requerido: bool = False) -> DiagnosticResult:
+    path = ROOT / nombre
+    return DiagnosticResult(
+        nivel=_nivel_existe(path, requerido=requerido),
+        mensaje=f"{nombre} {'existe' if path.exists() else 'no existe'}",
+        detalle=display_path(path),
+    )
+
+
+def _certificados_configurados(parser: configparser.ConfigParser | None) -> DiagnosticResult:
+    if parser is None:
+        return DiagnosticResult("WARN", "Certificados no verificables", "No se pudo leer sistema.ini")
+    if not parser.has_section("param") or not parser.has_section("WSAA"):
+        return DiagnosticResult("ERROR", "Certificados no configurados", "Faltan secciones de configuracion")
+
+    homo = parser.get("param", "homo", fallback="").strip().upper()
+    if homo == "N":
+        options = [("cert_prod", "certificado productivo"), ("privatekey_prod", "clave productiva")]
+    else:
+        options = [("cert_homo", "certificado de homologacion"), ("privatekey_homo", "clave de homologacion")]
+
+    faltantes = []
+    inexistentes = []
+    for option_name, label in options:
+        raw_path = parser.get("WSAA", option_name, fallback="").strip()
+        if not raw_path:
+            faltantes.append(label)
+            continue
+        if not resolve_config_path(raw_path).exists():
+            inexistentes.append(label)
+
+    if faltantes or inexistentes:
+        detalle = "; ".join(
+            item for item in [
+                "faltan rutas: {}".format(", ".join(faltantes)) if faltantes else "",
+                "no existen archivos: {}".format(", ".join(inexistentes)) if inexistentes else "",
+            ] if item
+        )
+        return DiagnosticResult("ERROR", "Certificados incompletos", detalle)
+    return DiagnosticResult("OK", "Certificados configurados", "Rutas declaradas y archivos encontrados")
+
+
+def _smtp_configurado(parser: configparser.ConfigParser | None) -> DiagnosticResult:
+    env_present = any(os.getenv(name) for name in ("SMTP_HOST", "SMTP_FROM", "SMTP_PASSWORD", "FASA_ERROR_EMAIL_PASSWORD"))
+    ini_present = False
+    if parser is not None and parser.has_section("email"):
+        ini_present = any(
+            parser.get("email", option, fallback="").strip()
+            for option in ("smtp_email", "from_address", "to_address")
+        )
+
+    if ini_present or env_present:
+        origen = "sistema.ini" if ini_present else "variables de entorno"
+        return DiagnosticResult("OK", "SMTP configurado", origen)
+    return DiagnosticResult("WARN", "SMTP no configurado", "No se detectaron host/remitente SMTP visibles")
+
+
+def _pyafipws_disponible() -> DiagnosticResult:
+    if importlib.util.find_spec("pyafipws") is not None:
+        return DiagnosticResult("OK", "PyAfipWs disponible", "Modulo importable")
+    if (ROOT / "pyafipws").exists():
+        return DiagnosticResult("OK", "PyAfipWs disponible", "Carpeta local pyafipws encontrada")
+    return DiagnosticResult("WARN", "PyAfipWs no disponible", "No se pudo ubicar el modulo")
+
+
+def _estado_afip_local() -> DiagnosticResult:
+    tickets = sorted(ROOT.glob("wsfe-*-ta.xml"), key=lambda path: path.stat().st_mtime, reverse=True)
+    if tickets:
+        return DiagnosticResult("OK", "Estado AFIP local disponible", f"Ultimo ticket: {display_path(tickets[0])}")
+    return DiagnosticResult("WARN", "Estado AFIP no disponible", "No hay estado local reciente para mostrar")
+
+
+def _ruta_logs() -> DiagnosticResult:
+    logs = [path for path in (ROOT / "info.log", ROOT / "error.log") if path.exists()]
+    if logs:
+        return DiagnosticResult("OK", "Ruta de logs", str(ROOT))
+    return DiagnosticResult("WARN", "Ruta de logs", "No se encontraron info.log/error.log en el proyecto")
+
+
+def collect_diagnostic_results(production: bool = False) -> list[DiagnosticResult]:
+    parser = read_config_silently()
+    version = sys.version_info
+    version_label = f"{version.major}.{version.minor}.{version.micro}"
+    homo = parser.get("param", "homo", fallback="").strip().upper() if parser else ""
+    modo = "Produccion" if homo == "N" or production else "Homologacion"
+    host = parser.get("param", "host", fallback="No configurado").strip() if parser else "No configurado"
+    base = parser.get("param", "base", fallback="No configurada").strip() if parser else "No configurada"
+
+    results = [
+        DiagnosticResult("OK" if version >= (3, 8) else "WARN", "Python detectado", version_label),
+        DiagnosticResult("OK", f"Modo {modo}", "homo=N" if modo == "Produccion" else "homo=S"),
+        DiagnosticResult("OK" if host and host != "No configurado" else "WARN", "Host de base de datos configurado", host),
+        DiagnosticResult("OK" if base and base != "No configurada" else "WARN", "Base configurada", base),
+        _resultado_archivo("sistema.ini", requerido=production),
+        _resultado_archivo(".env", requerido=production),
+        _certificados_configurados(parser),
+        _pyafipws_disponible(),
+        _smtp_configurado(parser),
+        _estado_afip_local(),
+        _ruta_logs(),
+    ]
+    return results
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
