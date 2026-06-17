@@ -97,6 +97,14 @@ def _notificar_fallo_final(email_registro, error_msg):
     El email se envía al administrador configurado en parámetros del sistema.
     """
     try:
+        asunto_original = (getattr(email_registro, 'asunto', '') or '').lower()
+        if 'fallo de envío de email id' in asunto_original or 'fallo de envio de email id' in asunto_original:
+            logging.warning(
+                "⚠️ No se encola notificación de fallo para otra notificación fallida ID %s",
+                getattr(email_registro, 'id', 'N/A'),
+            )
+            return
+
         email_admin = ParamSist.ObtenerParametro("EMAIL_ADMIN_NOTIFICACIONES")
         if not email_admin:
             logging.warning("⚠️ No hay EMAIL_ADMIN_NOTIFICACIONES configurado para notificar fallos")

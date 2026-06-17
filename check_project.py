@@ -177,6 +177,11 @@ def config_key_label(section: str, key: str) -> str:
     return f"clave [{section}] {key}"
 
 
+def read_config_file(parser: configparser.ConfigParser, path: Path) -> None:
+    with path.open("r", encoding="utf-8") as config_file:
+        parser.read_file(config_file)
+
+
 def read_config_silently() -> configparser.ConfigParser | None:
     config_path = ROOT / "sistema.ini"
     if not config_path.exists():
@@ -184,7 +189,7 @@ def read_config_silently() -> configparser.ConfigParser | None:
 
     parser = configparser.ConfigParser()
     try:
-        parser.read(config_path, encoding="utf-8")
+        read_config_file(parser, config_path)
     except configparser.Error:
         return None
     return parser
@@ -370,7 +375,7 @@ def load_config(report: Report, production: bool = False) -> configparser.Config
 
     parser = configparser.ConfigParser()
     try:
-        parser.read(config_path, encoding="utf-8")
+        read_config_file(parser, config_path)
     except configparser.Error as exc:
         report.error(f"sistema.ini invalido: {exc}")
         return None
@@ -386,7 +391,7 @@ def example_wscdc_keys() -> list[str]:
 
     parser = configparser.ConfigParser()
     try:
-        parser.read(example_path, encoding="utf-8")
+        read_config_file(parser, example_path)
     except configparser.Error:
         return []
 

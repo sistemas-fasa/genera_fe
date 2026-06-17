@@ -135,6 +135,27 @@ def test_check_project_exposes_structured_diagnostic_results_without_secrets():
         assert term not in visible_text
 
 
+def test_collect_diagnostic_results_tolerates_pyafipws_configparser_patch(monkeypatch):
+    import configparser
+
+    import check_project
+
+    def patched_read(self, filename):
+        with open(filename) as config_file:
+            self.read_file(config_file)
+
+    monkeypatch.setattr(
+        configparser.ConfigParser,
+        "read",
+        patched_read,
+    )
+
+    results = check_project.collect_diagnostic_results()
+
+    assert results
+    assert any(result.mensaje.startswith("Modo") for result in results)
+
+
 def test_main_view_has_diagnostic_button_and_controller_opens_panel():
     main_view_source = read_text("vistas/Main.py")
     main_controller_source = read_text("controladores/Main.py")
