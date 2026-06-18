@@ -186,7 +186,9 @@ class FEv1(WSFEv1):
         proxy = ""
         wrapper = ""  # "pycurl"
         cacert = True  # geotrust.crt"
-        ok = self.Conectar(cache, wsdl, proxy, wrapper, cacert)
+        ok = self.Conectar(cache, wsdl, proxy, wrapper, cacert, timeout=_afip_timeout())
+        if not ok:
+            raise RuntimeError(self.Excepcion)
 
         ta = self.Autenticar()
         self.SetTicketAcceso(ta_string=ta)
@@ -207,7 +209,9 @@ class FEv1(WSFEv1):
         proxy = ""
         wrapper = ""  # "pycurl"
         cacert = True  # geotrust.crt"
-        ok = self.Conectar(cache, wsdl, proxy, wrapper, cacert)
+        ok = self.Conectar(cache, wsdl, proxy, wrapper, cacert, timeout=_afip_timeout())
+        if not ok:
+            raise RuntimeError(self.Excepcion)
         ta = self.Autenticar()
         self.SetTicketAcceso(ta_string=ta)
         self.Cuit = self.cuit_emisor
