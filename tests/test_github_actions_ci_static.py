@@ -46,6 +46,9 @@ def test_ci_workflow_runs_safe_static_validation_commands():
         "tests/test_no_secret_logging_static.py",
         "tests/test_informa_caea_static.py",
         "tests/test_emails_pendientes_schema_migration_static.py",
+        "tests/test_contingencia_caea.py",
+        "tests/test_contingencia_caea_main_static.py",
+        "tests/test_contingencia_caea_static.py",
         "python check_project.py",
     ]
 

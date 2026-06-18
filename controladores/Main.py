@@ -2,6 +2,7 @@
 import calendar
 from concurrent.futures import ThreadPoolExecutor
 import os
+import socket
 import traceback
 import logging
 from datetime import datetime, timedelta
@@ -14,6 +15,7 @@ from PyQt5.QtWidgets import QApplication
 from peewee import fn
 
 from controladores.ConsultaPadronAfip import PadronAfip
+from controladores.ContingenciaCAEA import activar_modo_caea, restaurar_modo_ws
 from controladores.ControladorBase import ControladorBase
 from controladores.CAEAProgramado import solicitar_caea_si_corresponde
 from controladores.EnvioEmailsPendientes import enviar_email_en_hilo, encolar_email, reactivar_emails_retrasados
@@ -210,6 +212,39 @@ class MainController(ControladorBase):
             solicitar_caea_si_corresponde(empresa_id=1)
         except Exception:
             logging.exception("No se pudo verificar/solicitar CAEA programado al iniciar")
+
+    def _maquina_imprefiscal_contingencia(self):
+        return _normalizar_texto_config(
+            LeerIni(clave='maquina_imprefiscal') or
+            ParamSist.ObtenerParametro('MAQUINA_IMPREFISCAL') or
+            socket.gethostname()
+        )
+
+    def _empresa_imprefiscal_contingencia(self):
+        valor = _normalizar_texto_config(
+            LeerIni(clave='empresa_imprefiscal') or
+            ParamSist.ObtenerParametro('EMPRESA_IMPREFISCAL')
+        )
+        try:
+            return int(valor) if valor else 1
+        except (TypeError, ValueError):
+            logging.warning("EMPRESA_IMPREFISCAL invalida: %s. Se usa empresa 1.", valor)
+            return 1
+
+    def _sincronizar_contingencia_caea(self, afip_disponible):
+        maquina = self._maquina_imprefiscal_contingencia()
+        empresa_id = self._empresa_imprefiscal_contingencia()
+        try:
+            if afip_disponible:
+                restaurar_modo_ws(maquina, empresa_id)
+            else:
+                activar_modo_caea(
+                    maquina,
+                    empresa_id,
+                    motivo='AFIP no disponible segun FEDummy',
+                )
+        except Exception:
+            logging.exception("No se pudo sincronizar contingencia CAEA para imprefiscal")
 
     def _leer_intervalo_verificacion_afip(self):
         valor_ini = LeerIni(clave='afip_intervalo_verificacion_minutos')
@@ -558,6 +593,7 @@ class MainController(ControladorBase):
 
         self.afip_estados = estados
         self.afip_disponible = disponible
+        self._sincronizar_contingencia_caea(disponible)
 
         self.afip_ultima_verificacion = ahora
         self._actualizar_estado_operativo_afip()
