@@ -15,6 +15,7 @@ from peewee import fn
 
 from controladores.ConsultaPadronAfip import PadronAfip
 from controladores.ControladorBase import ControladorBase
+from controladores.CAEAProgramado import solicitar_caea_si_corresponde
 from controladores.EnvioEmailsPendientes import enviar_email_en_hilo, encolar_email, reactivar_emails_retrasados
 from controladores.FCE import WsFECred
 from controladores.FE import FEv1
@@ -183,6 +184,10 @@ class MainController(ControladorBase):
         self.conectarWidgets()
         self.model = ModeloBase()
         self.model.getDb()
+        try:
+            solicitar_caea_si_corresponde(empresa_id=1)
+        except Exception:
+            logging.exception("No se pudo verificar/solicitar CAEA programado al iniciar")
         self._actualizar_estado_operativo_afip()
         self._actualizar_estado_operativo_emails()
         self.afip_intervalo_verificacion = self._leer_intervalo_verificacion_afip()

@@ -8,10 +8,10 @@
 # WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTIBILITY
 # or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
 # for more details.
-from peewee import AutoField, CharField, DateField, TextField, ForeignKeyField, DateTimeField
+from peewee import AutoField, CharField, DateField, TextField, ForeignKeyField, DateTimeField, IntegerField
 
 from modelos.Empresas import Empresa
-from modelos.ModeloBase import ModeloBase
+from modelos.ModeloBase import ModeloBase, BitBooleanField
 
 
 class CAEA(ModeloBase):
@@ -28,6 +28,8 @@ class CAEA(ModeloBase):
     empresa = ForeignKeyField(Empresa, db_column='empresa')
     ptovta = CharField(max_length=4, default='')
     estado = CharField(max_length=1, default='')
+    transferido = BitBooleanField(default=0)
+    nrelacion = IntegerField(default=0)
 
     class Meta:
         table_name = 'caea'
