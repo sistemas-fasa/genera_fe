@@ -20,5 +20,16 @@ class ImpreFiscalFasa(ModeloBaseFASA):
             cls.empresa_id == empresa_id,
         ).first()
 
+    @classmethod
+    def listar_por_empresa(cls, empresa_id):
+        return list(cls.select().where(cls.empresa_id == empresa_id))
+
+    @classmethod
+    def listar_por_maquinas(cls, empresa_id, maquinas):
+        return list(cls.select().where(
+            cls.empresa_id == empresa_id,
+            cls.maquina.in_(maquinas),
+        ))
+
     class Meta:
         table_name = 'imprefiscal'

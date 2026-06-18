@@ -29,7 +29,7 @@ def _forzar_imports_sin_db_real():
 
 _forzar_imports_sin_db_real()
 
-from controladores.ContingenciaCAEA import activar_modo_caea, restaurar_modo_ws  # noqa: E402
+from controladores.ContingenciaCAEA import activar_modo_caea_para_maquinas, restaurar_modo_ws_para_empresa  # noqa: E402
 
 
 class RegistroFake:
@@ -73,6 +73,16 @@ class ImpreFiscalFake:
             return self.registro
         return None
 
+    def listar_por_empresa(self, empresa_id):
+        if self.registro.empresa_id == empresa_id:
+            return [self.registro]
+        return []
+
+    def listar_por_maquinas(self, empresa_id, maquinas):
+        if self.registro.empresa_id == empresa_id and self.registro.maquina in maquinas:
+            return [self.registro]
+        return []
+
 
 class ContingenciaFake:
     def __init__(self):
@@ -87,6 +97,9 @@ class ContingenciaFake:
             if registro.maquina == maquina and registro.empresa_id == empresa_id and registro.activa:
                 return registro
         return None
+
+    def listar_activas_por_empresa(self, empresa_id):
+        return [registro for registro in self.creados if registro.empresa_id == empresa_id and registro.activa]
 
     def create(self, **datos):
         registro = RegistroFake(id=len(self.creados) + 1, **datos)
@@ -140,9 +153,9 @@ def main():
     print("imprefiscal inicial: {}".format(_estado_imprefiscal(imprefiscal.registro)))
 
     print("AFIP disponible=False -> activar contingencia")
-    activar_modo_caea(
-        maquina,
-        empresa_id,
+    activar_modo_caea_para_maquinas(
+        empresa_id=empresa_id,
+        maquinas=None,
         motivo="Prueba controlada",
         imprefiscal_model=imprefiscal,
         ptovta_model=ptovtas,
@@ -150,17 +163,16 @@ def main():
         database=db,
         caea_existente=caea_vigente,
     )
-    print("imprefiscal despues de activar: {}".format(_estado_imprefiscal(imprefiscal.registro)))
+    print("{}: {}".format(maquina, _estado_imprefiscal(imprefiscal.registro)))
 
     print("AFIP disponible=True -> restaurar WS")
-    restaurar_modo_ws(
-        maquina,
-        empresa_id,
+    restaurar_modo_ws_para_empresa(
+        empresa_id=empresa_id,
         imprefiscal_model=imprefiscal,
         contingencia_model=contingencias,
         database=db,
     )
-    print("imprefiscal despues de restaurar: {}".format(_estado_imprefiscal(imprefiscal.registro)))
+    print("{}: {}".format(maquina, _estado_imprefiscal(imprefiscal.registro)))
 
     assert imprefiscal.registro.ptovtafac == "0019"
     assert imprefiscal.registro.ptovtaticket == "0018"

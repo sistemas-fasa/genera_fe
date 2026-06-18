@@ -25,8 +25,8 @@ def test_script_controlado_simula_caida_y_recuperacion_sin_efectos_reales():
     assert "Sin DB real, sin AFIP real, sin email real." in resultado.stdout
     assert "CAEA vigente simulado: si" in resultado.stdout
     assert "AFIP disponible=False -> activar contingencia" in resultado.stdout
-    assert "imprefiscal despues de activar: ptovtafac=0021 ptovtaticket=0022" in resultado.stdout
+    assert "CAJA-CONTROLADA: ptovtafac=0021 ptovtaticket=0022" in resultado.stdout
     assert "AFIP disponible=True -> restaurar WS" in resultado.stdout
-    assert "imprefiscal despues de restaurar: ptovtafac=0019 ptovtaticket=0018" in resultado.stdout
+    assert "CAJA-CONTROLADA: ptovtafac=0019 ptovtaticket=0018" in resultado.stdout
     assert "Resultado: OK" in resultado.stdout
     assert "SolicitarCAEA" not in resultado.stdout

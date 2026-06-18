@@ -59,6 +59,24 @@ def _buscar_imprefiscal(imprefiscal_model, maquina, empresa_id):
     ).first()
 
 
+def _listar_imprefiscal(imprefiscal_model, empresa_id, maquinas=None):
+    if maquinas:
+        listar = getattr(imprefiscal_model, 'listar_por_maquinas', None)
+        if listar:
+            return list(listar(empresa_id, maquinas))
+        registros = []
+        for maquina in maquinas:
+            registro = _buscar_imprefiscal(imprefiscal_model, maquina, empresa_id)
+            if registro:
+                registros.append(registro)
+        return registros
+
+    listar = getattr(imprefiscal_model, 'listar_por_empresa', None)
+    if listar:
+        return list(listar(empresa_id))
+    return list(imprefiscal_model.select().where(imprefiscal_model.empresa_id == empresa_id))
+
+
 def _buscar_contingencia_activa(contingencia_model, maquina, empresa_id):
     buscar = getattr(contingencia_model, 'buscar_activa', None)
     if buscar:
@@ -68,6 +86,16 @@ def _buscar_contingencia_activa(contingencia_model, maquina, empresa_id):
         contingencia_model.empresa_id == empresa_id,
         contingencia_model.activa == True,
     ).first()
+
+
+def _listar_contingencias_activas(contingencia_model, empresa_id):
+    listar = getattr(contingencia_model, 'listar_activas_por_empresa', None)
+    if listar:
+        return list(listar(empresa_id))
+    return list(contingencia_model.select().where(
+        contingencia_model.empresa_id == empresa_id,
+        contingencia_model.activa == True,
+    ))
 
 
 def _asegurar_tabla_contingencia(contingencia_model):
@@ -105,6 +133,33 @@ def _fecha_en_rango(fecha, desde, hasta):
     if isinstance(hasta, datetime):
         hasta = hasta.date()
     return desde <= fecha <= hasta
+
+
+def _resumen_contingencia():
+    return {
+        "activadas": [],
+        "ya_activas": [],
+        "restauradas": [],
+        "errores": [],
+    }
+
+
+def resolver_alcance_maquinas_imprefiscal(valor_maquinas=None, valor_legacy=None):
+    valor_maquinas = (valor_maquinas or '').strip()
+    if valor_maquinas:
+        if valor_maquinas == '*':
+            return None
+        return [maquina.strip() for maquina in valor_maquinas.split(',') if maquina.strip()]
+
+    valor_legacy = (valor_legacy or '').strip()
+    if valor_legacy:
+        return [valor_legacy]
+
+    return None
+
+
+def _maquina_de_registro(registro):
+    return (getattr(registro, 'maquina', '') or '').strip()
 
 
 def obtener_punto_caea_equivalente(ptovta_ws, empresa_id, ptovta_model=None):
@@ -247,6 +302,50 @@ def activar_modo_caea(
     return respaldo
 
 
+def activar_modo_caea_para_maquinas(
+        empresa_id,
+        maquinas=None,
+        motivo='',
+        imprefiscal_model=None,
+        ptovta_model=None,
+        contingencia_model=None,
+        database=None,
+        caea_existente=None):
+    imprefiscal_model = imprefiscal_model or ImpreFiscalFasa
+    ptovta_model = ptovta_model or PtoVtaFasa
+    contingencia_model = contingencia_model or ImpreFiscalContingenciaFasa
+    resumen = _resumen_contingencia()
+    caea_existente = caea_existente or hay_caea_vigente
+    if not caea_existente(empresa_id):
+        raise RuntimeError("No hay CAEA vigente para empresa {}. No se cambia imprefiscal.".format(empresa_id))
+
+    _asegurar_tabla_contingencia(contingencia_model)
+    for registro in _listar_imprefiscal(imprefiscal_model, empresa_id, maquinas=maquinas):
+        maquina = _maquina_de_registro(registro)
+        if not maquina:
+            resumen["errores"].append({"maquina": "", "error": "imprefiscal sin maquina"})
+            continue
+        if _buscar_contingencia_activa(contingencia_model, maquina, empresa_id):
+            resumen["ya_activas"].append(maquina)
+            continue
+        try:
+            activar_modo_caea(
+                maquina,
+                empresa_id,
+                motivo=motivo,
+                imprefiscal_model=imprefiscal_model,
+                ptovta_model=ptovta_model,
+                contingencia_model=contingencia_model,
+                database=database,
+                caea_existente=lambda _empresa_id: True,
+            )
+            resumen["activadas"].append(maquina)
+        except Exception as exc:
+            logging.exception("No se pudo activar contingencia CAEA para maquina %s", maquina)
+            resumen["errores"].append({"maquina": maquina, "error": str(exc)})
+    return resumen
+
+
 def restaurar_modo_ws(
         maquina,
         empresa_id,
@@ -286,6 +385,32 @@ def restaurar_modo_ws(
         imprefiscal.ptovtaticket,
     )
     return activa
+
+
+def restaurar_modo_ws_para_empresa(
+        empresa_id,
+        imprefiscal_model=None,
+        contingencia_model=None,
+        database=None):
+    imprefiscal_model = imprefiscal_model or ImpreFiscalFasa
+    contingencia_model = contingencia_model or ImpreFiscalContingenciaFasa
+    resumen = _resumen_contingencia()
+    _asegurar_tabla_contingencia(contingencia_model)
+    for contingencia in _listar_contingencias_activas(contingencia_model, empresa_id):
+        maquina = _maquina_de_registro(contingencia)
+        try:
+            restaurar_modo_ws(
+                maquina,
+                empresa_id,
+                imprefiscal_model=imprefiscal_model,
+                contingencia_model=contingencia_model,
+                database=database,
+            )
+            resumen["restauradas"].append(maquina)
+        except Exception as exc:
+            logging.exception("No se pudo restaurar contingencia CAEA para maquina %s", maquina)
+            resumen["errores"].append({"maquina": maquina, "error": str(exc)})
+    return resumen
 
 
 def contingencia_activa(maquina, empresa_id, contingencia_model=None):
