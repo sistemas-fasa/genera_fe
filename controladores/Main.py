@@ -184,10 +184,7 @@ class MainController(ControladorBase):
         self.conectarWidgets()
         self.model = ModeloBase()
         self.model.getDb()
-        try:
-            solicitar_caea_si_corresponde(empresa_id=1)
-        except Exception:
-            logging.exception("No se pudo verificar/solicitar CAEA programado al iniciar")
+        QTimer.singleShot(1000, self._verificar_caea_programado)
         self._actualizar_estado_operativo_afip()
         self._actualizar_estado_operativo_emails()
         self.afip_intervalo_verificacion = self._leer_intervalo_verificacion_afip()
@@ -207,6 +204,12 @@ class MainController(ControladorBase):
             self._notificar_arranque_monitor_afip(destinatario, cc)
         else:
             logging.info("Monitor AFIP arranque - notificacion por email deshabilitada por configuracion")
+
+    def _verificar_caea_programado(self):
+        try:
+            solicitar_caea_si_corresponde(empresa_id=1)
+        except Exception:
+            logging.exception("No se pudo verificar/solicitar CAEA programado al iniciar")
 
     def _leer_intervalo_verificacion_afip(self):
         valor_ini = LeerIni(clave='afip_intervalo_verificacion_minutos')

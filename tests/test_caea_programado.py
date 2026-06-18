@@ -1,5 +1,6 @@
 from datetime import date, datetime
 from pathlib import Path
+import ast
 
 import pytest
 
@@ -200,6 +201,64 @@ def test_main_invoca_caea_programado_sin_romper_arranque_y_env_example_documenta
     env_example = (root / ".env.example").read_text(encoding="utf-8")
 
     assert "from controladores.CAEAProgramado import solicitar_caea_si_corresponde" in main_source
-    assert "solicitar_caea_si_corresponde(empresa_id=1)" in main_source
+    assert "QTimer.singleShot(1000, self._verificar_caea_programado)" in main_source
+    assert "def _verificar_caea_programado(self):" in main_source
     assert "No se pudo verificar/solicitar CAEA programado al iniciar" in main_source
     assert "CAEA_NOTIFICACION_EMAIL=sistemas@ferreteriaavenida.com.ar" in env_example
+
+
+def _function_def(path, name):
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == name:
+            return node
+    raise AssertionError("No se encontro la funcion {}".format(name))
+
+
+def _called_names(node):
+    names = []
+    for child in ast.walk(node):
+        if not isinstance(child, ast.Call):
+            continue
+        if isinstance(child.func, ast.Name):
+            names.append(child.func.id)
+        elif isinstance(child.func, ast.Attribute):
+            names.append(child.func.attr)
+    return names
+
+
+def test_main_no_verifica_caea_sincronicamente_en_constructor():
+    root = Path(__file__).resolve().parents[1]
+    main_path = root / "controladores" / "Main.py"
+    init = _function_def(main_path, "__init__")
+    verificar = _function_def(main_path, "_verificar_caea_programado")
+
+    assert "solicitar_caea_si_corresponde" not in _called_names(init)
+    assert "singleShot" in _called_names(init)
+    assert "solicitar_caea_si_corresponde" in _called_names(verificar)
+
+
+def test_verificacion_caea_programada_mantiene_try_except_y_log():
+    root = Path(__file__).resolve().parents[1]
+    main_path = root / "controladores" / "Main.py"
+    main_source = main_path.read_text(encoding="utf-8")
+    verificar = _function_def(main_path, "_verificar_caea_programado")
+    source = ast.get_source_segment(main_source, verificar)
+
+    assert any(isinstance(node, ast.Try) for node in ast.walk(verificar))
+    assert "logging.exception(\"No se pudo verificar/solicitar CAEA programado al iniciar\")" in source
+
+
+def test_fev1_caea_usa_timeout_y_falla_si_no_conecta():
+    root = Path(__file__).resolve().parents[1]
+    fe_path = root / "controladores" / "FE.py"
+    fe_source = fe_path.read_text(encoding="utf-8")
+    solicitar = ast.get_source_segment(fe_source, _function_def(fe_path, "SolicitarCAEA"))
+    informar = ast.get_source_segment(fe_source, _function_def(fe_path, "InformarCAEASinMovimiento"))
+
+    assert "timeout=_afip_timeout()" in solicitar
+    assert "if not ok:" in solicitar
+    assert "raise RuntimeError(self.Excepcion)" in solicitar
+    assert "timeout=_afip_timeout()" in informar
+    assert "if not ok:" in informar
+    assert "raise RuntimeError(self.Excepcion)" in informar
