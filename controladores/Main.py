@@ -2,7 +2,6 @@
 import calendar
 from concurrent.futures import ThreadPoolExecutor
 import os
-import socket
 import traceback
 import logging
 from datetime import datetime, timedelta
@@ -15,7 +14,8 @@ from PyQt5.QtWidgets import QApplication
 from peewee import fn
 
 from controladores.ConsultaPadronAfip import PadronAfip
-from controladores.ContingenciaCAEA import activar_modo_caea, restaurar_modo_ws
+from controladores.ContingenciaCAEA import activar_modo_caea_para_maquinas, restaurar_modo_ws_para_empresa, \
+    resolver_alcance_maquinas_imprefiscal
 from controladores.ControladorBase import ControladorBase
 from controladores.CAEAProgramado import solicitar_caea_si_corresponde
 from controladores.EnvioEmailsPendientes import enviar_email_en_hilo, encolar_email, reactivar_emails_retrasados
@@ -213,11 +213,18 @@ class MainController(ControladorBase):
         except Exception:
             logging.exception("No se pudo verificar/solicitar CAEA programado al iniciar")
 
-    def _maquina_imprefiscal_contingencia(self):
-        return _normalizar_texto_config(
-            LeerIni(clave='maquina_imprefiscal') or
-            ParamSist.ObtenerParametro('MAQUINA_IMPREFISCAL') or
-            socket.gethostname()
+    def _maquinas_imprefiscal_contingencia(self):
+        return resolver_alcance_maquinas_imprefiscal(
+            valor_maquinas=_normalizar_texto_config(
+                LeerIni(clave='maquinas_imprefiscal') or
+                ParamSist.ObtenerParametro('MAQUINAS_IMPREFISCAL') or
+                os.getenv('MAQUINAS_IMPREFISCAL')
+            ),
+            valor_legacy=_normalizar_texto_config(
+                LeerIni(clave='maquina_imprefiscal') or
+                ParamSist.ObtenerParametro('MAQUINA_IMPREFISCAL') or
+                os.getenv('MAQUINA_IMPREFISCAL')
+            ),
         )
 
     def _empresa_imprefiscal_contingencia(self):
@@ -232,15 +239,15 @@ class MainController(ControladorBase):
             return 1
 
     def _sincronizar_contingencia_caea(self, afip_disponible):
-        maquina = self._maquina_imprefiscal_contingencia()
         empresa_id = self._empresa_imprefiscal_contingencia()
+        maquinas = self._maquinas_imprefiscal_contingencia()
         try:
             if afip_disponible:
-                restaurar_modo_ws(maquina, empresa_id)
+                restaurar_modo_ws_para_empresa(empresa_id)
             else:
-                activar_modo_caea(
-                    maquina,
-                    empresa_id,
+                activar_modo_caea_para_maquinas(
+                    empresa_id=empresa_id,
+                    maquinas=maquinas,
                     motivo='AFIP no disponible segun FEDummy',
                 )
         except Exception:

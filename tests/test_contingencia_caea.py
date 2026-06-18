@@ -104,6 +104,16 @@ class ImpreFiscalFake:
                 return registro
         return None
 
+    def listar_por_empresa(self, empresa_id):
+        return [registro for registro in self.registros if registro.empresa_id == empresa_id]
+
+    def listar_por_maquinas(self, empresa_id, maquinas):
+        maquinas = set(maquinas)
+        return [
+            registro for registro in self.registros
+            if registro.empresa_id == empresa_id and registro.maquina in maquinas
+        ]
+
 
 class ContingenciaFake:
     tabla_asegurada = False
@@ -119,6 +129,9 @@ class ContingenciaFake:
             if registro.maquina == maquina and registro.empresa_id == empresa_id and registro.activa:
                 return registro
         return None
+
+    def listar_activas_por_empresa(self, empresa_id):
+        return [registro for registro in self.creados if registro.empresa_id == empresa_id and registro.activa]
 
     def create(self, **datos):
         registro = RegistroFake(id=len(self.creados) + 1, **datos)
@@ -359,3 +372,127 @@ def test_restaurar_sin_contingencia_activa_no_falla():
         contingencia_model=contingencias,
     ) is None
     assert contingencias.tabla_asegurada is True
+
+
+def test_activar_modo_caea_para_maquinas_procesa_todas_idempotente_y_continua_errores():
+    from controladores.ContingenciaCAEA import activar_modo_caea_para_maquinas
+
+    imprefiscal = ImpreFiscalFake([
+        {"maquina": "CAJA1", "empresa_id": 1, "ptovtafac": "0019", "ptovtaticket": "0018"},
+        {"maquina": "CAJA2", "empresa_id": 1, "ptovtafac": "0020", "ptovtaticket": "0020"},
+        {"maquina": "CAJA3", "empresa_id": 1, "ptovtafac": "0019", "ptovtaticket": "0018"},
+        {"maquina": "CAJA_ERR", "empresa_id": 1, "ptovtafac": "0099", "ptovtaticket": "0018"},
+        {"maquina": "OTRA_EMPRESA", "empresa_id": 2, "ptovtafac": "0019", "ptovtaticket": "0018"},
+    ])
+    contingencias = ContingenciaFake()
+    contingencias.create(
+        maquina="CAJA3",
+        empresa_id=1,
+        ptovtafac_original="0019",
+        ptovtaticket_original="0018",
+        ptovtafac_caea="0021",
+        ptovtaticket_caea="0022",
+        activa=True,
+        fecha_activacion=datetime(2026, 6, 18, 12, 0),
+        fecha_restauracion=None,
+        motivo="ya activa",
+    )
+    db = DBFake()
+
+    resumen = activar_modo_caea_para_maquinas(
+        empresa_id=1,
+        maquinas=None,
+        imprefiscal_model=imprefiscal,
+        ptovta_model=_ptovtas_base(),
+        contingencia_model=contingencias,
+        database=db,
+        caea_existente=lambda empresa_id: True,
+    )
+
+    assert resumen["activadas"] == ["CAJA1", "CAJA2"]
+    assert resumen["ya_activas"] == ["CAJA3"]
+    assert [error["maquina"] for error in resumen["errores"]] == ["CAJA_ERR"]
+    assert resumen["restauradas"] == []
+    assert imprefiscal.buscar("CAJA1", 1).ptovtafac == "0021"
+    assert imprefiscal.buscar("CAJA1", 1).ptovtaticket == "0022"
+    assert imprefiscal.buscar("CAJA2", 1).ptovtafac == "0023"
+    assert imprefiscal.buscar("CAJA2", 1).ptovtaticket == "0023"
+    assert imprefiscal.buscar("CAJA3", 1).ptovtafac == "0019"
+    assert imprefiscal.buscar("CAJA_ERR", 1).ptovtafac == "0099"
+    assert len(contingencias.creados) == 3
+
+
+def test_activar_modo_caea_para_maquinas_respeta_lista_configurada():
+    from controladores.ContingenciaCAEA import activar_modo_caea_para_maquinas
+
+    imprefiscal = ImpreFiscalFake([
+        {"maquina": "CAJA1", "empresa_id": 1, "ptovtafac": "0019", "ptovtaticket": "0018"},
+        {"maquina": "CAJA2", "empresa_id": 1, "ptovtafac": "0020", "ptovtaticket": "0020"},
+        {"maquina": "CAJA3", "empresa_id": 1, "ptovtafac": "0019", "ptovtaticket": "0018"},
+    ])
+
+    resumen = activar_modo_caea_para_maquinas(
+        empresa_id=1,
+        maquinas=["CAJA1", "CAJA2"],
+        imprefiscal_model=imprefiscal,
+        ptovta_model=_ptovtas_base(),
+        contingencia_model=ContingenciaFake(),
+        caea_existente=lambda empresa_id: True,
+    )
+
+    assert resumen["activadas"] == ["CAJA1", "CAJA2"]
+    assert imprefiscal.buscar("CAJA3", 1).ptovtafac == "0019"
+
+
+def test_restaurar_modo_ws_para_empresa_restaura_todas_las_activas():
+    from controladores.ContingenciaCAEA import restaurar_modo_ws_para_empresa
+
+    imprefiscal = ImpreFiscalFake([
+        {"maquina": "CAJA1", "empresa_id": 1, "ptovtafac": "0021", "ptovtaticket": "0022"},
+        {"maquina": "CAJA2", "empresa_id": 1, "ptovtafac": "0023", "ptovtaticket": "0023"},
+        {"maquina": "CAJA3", "empresa_id": 1, "ptovtafac": "0021", "ptovtaticket": "0022"},
+    ])
+    contingencias = ContingenciaFake()
+    for maquina, fac_original, ticket_original in (
+        ("CAJA1", "0019", "0018"),
+        ("CAJA2", "0020", "0020"),
+    ):
+        contingencias.create(
+            maquina=maquina,
+            empresa_id=1,
+            ptovtafac_original=fac_original,
+            ptovtaticket_original=ticket_original,
+            ptovtafac_caea="",
+            ptovtaticket_caea="",
+            activa=True,
+            fecha_activacion=datetime(2026, 6, 18, 12, 0),
+            fecha_restauracion=None,
+            motivo="AFIP caido",
+        )
+
+    resumen = restaurar_modo_ws_para_empresa(
+        empresa_id=1,
+        imprefiscal_model=imprefiscal,
+        contingencia_model=contingencias,
+    )
+
+    assert resumen["restauradas"] == ["CAJA1", "CAJA2"]
+    assert resumen["activadas"] == []
+    assert resumen["ya_activas"] == []
+    assert resumen["errores"] == []
+    assert imprefiscal.buscar("CAJA1", 1).ptovtafac == "0019"
+    assert imprefiscal.buscar("CAJA1", 1).ptovtaticket == "0018"
+    assert imprefiscal.buscar("CAJA2", 1).ptovtafac == "0020"
+    assert imprefiscal.buscar("CAJA2", 1).ptovtaticket == "0020"
+    assert all(registro.activa is False for registro in contingencias.creados)
+
+
+def test_resolver_alcance_maquinas_imprefiscal_configura_todas_lista_default_y_legacy():
+    from controladores.ContingenciaCAEA import resolver_alcance_maquinas_imprefiscal
+
+    assert resolver_alcance_maquinas_imprefiscal(valor_maquinas="*") is None
+    assert resolver_alcance_maquinas_imprefiscal(valor_maquinas="CAJA1, CAJA2") == ["CAJA1", "CAJA2"]
+    assert resolver_alcance_maquinas_imprefiscal(valor_maquinas="") is None
+    assert resolver_alcance_maquinas_imprefiscal(valor_maquinas=None) is None
+    assert resolver_alcance_maquinas_imprefiscal(valor_maquinas="", valor_legacy="CAJA1") == ["CAJA1"]
+    assert resolver_alcance_maquinas_imprefiscal(valor_maquinas=None, valor_legacy="CAJA1") == ["CAJA1"]

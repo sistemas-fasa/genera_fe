@@ -31,6 +31,13 @@ class ImpreFiscalContingenciaFasa(ModeloBaseFASA):
             cls.activa == True,
         ).first()
 
+    @classmethod
+    def listar_activas_por_empresa(cls, empresa_id):
+        return list(cls.select().where(
+            cls.empresa_id == empresa_id,
+            cls.activa == True,
+        ))
+
     class Meta:
         table_name = 'imprefiscal_contingencia'
         indexes = (
