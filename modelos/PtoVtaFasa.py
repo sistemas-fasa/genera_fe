@@ -31,4 +31,7 @@ class PtoVtaFasa(ModeloBaseFASA):
 
     class Meta:
         table_name = 'ptovtas'
-        primary_key = peewee.CompositeKey('ptovta', 'empresa_id')
+        primary_key = False
+        indexes = (
+            (('ptovta', 'empresa_id'), True),
+        )

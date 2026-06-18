@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 import sys
 
 import pytest
@@ -50,6 +50,48 @@ class PtoVtaFake:
                 continue
             return registro
         return None
+
+
+class CampoFake:
+    def __init__(self, nombre):
+        self.nombre = nombre
+
+    def __eq__(self, otro):
+        return (self.nombre, "==", otro)
+
+    def __ne__(self, otro):
+        return (self.nombre, "!=", otro)
+
+
+class QueryCAEAFechaFake:
+    def __init__(self, registros):
+        self.registros = registros
+        self.condiciones = None
+
+    def where(self, *condiciones):
+        self.condiciones = condiciones
+        return self
+
+    def first(self):
+        esperados = {campo: valor for campo, operador, valor in self.condiciones if operador == "=="}
+        for registro in self.registros:
+            if all(getattr(registro, campo) == valor for campo, valor in esperados.items()):
+                if getattr(registro, "CAEA", ""):
+                    return registro
+        return None
+
+
+class CAEAModelFake:
+    periodo = CampoFake("periodo")
+    orden = CampoFake("orden")
+    empresa = CampoFake("empresa")
+    CAEA = CampoFake("CAEA")
+
+    def __init__(self, registros):
+        self.registros = [RegistroFake(**registro) for registro in registros]
+
+    def select(self):
+        return QueryCAEAFechaFake(self.registros)
 
 
 class ImpreFiscalFake:
@@ -203,6 +245,68 @@ def test_activar_modo_caea_exige_caea_existente_y_no_cambia_parcialmente():
     assert registro.ptovtafac == "0019"
     assert registro.ptovtaticket == "0018"
     assert contingencias.creados == []
+
+
+def test_activar_modo_caea_falla_si_ptovtaticket_no_resuelve_sin_cambio_parcial():
+    from controladores.ContingenciaCAEA import activar_modo_caea
+
+    imprefiscal = ImpreFiscalFake([
+        {"maquina": "CAJA-01", "empresa_id": 1, "ptovtafac": "0019", "ptovtaticket": ""},
+    ])
+    contingencias = ContingenciaFake()
+    db = DBFake()
+
+    with pytest.raises(RuntimeError, match="No se encontro punto de venta"):
+        activar_modo_caea(
+            "CAJA-01",
+            1,
+            imprefiscal_model=imprefiscal,
+            ptovta_model=_ptovtas_base(),
+            contingencia_model=contingencias,
+            database=db,
+            caea_existente=lambda empresa_id: True,
+        )
+
+    registro = imprefiscal.buscar("CAJA-01", 1)
+    assert registro.ptovtafac == "0019"
+    assert registro.ptovtaticket == ""
+    assert contingencias.creados == []
+    assert db.atomic_calls == 0
+
+
+def test_hay_caea_vigente_valida_periodo_orden_y_rango_de_fechas():
+    from controladores.ContingenciaCAEA import hay_caea_vigente
+
+    caea_model = CAEAModelFake([
+        {
+            "periodo": "202606",
+            "orden": "2",
+            "empresa": 1,
+            "CAEA": "12345678901234",
+            "fchvigdesde": date(2026, 6, 16),
+            "fchvighasta": date(2026, 6, 30),
+        },
+    ])
+
+    assert hay_caea_vigente(1, fecha=date(2026, 6, 25), caea_model=caea_model) is True
+    assert hay_caea_vigente(1, fecha=date(2026, 7, 1), caea_model=caea_model) is False
+
+
+def test_hay_caea_vigente_rechaza_registro_del_periodo_con_fecha_fuera_de_vigencia():
+    from controladores.ContingenciaCAEA import hay_caea_vigente
+
+    caea_model = CAEAModelFake([
+        {
+            "periodo": "202606",
+            "orden": "2",
+            "empresa": 1,
+            "CAEA": "12345678901234",
+            "fchvigdesde": date(2026, 6, 1),
+            "fchvighasta": date(2026, 6, 15),
+        },
+    ])
+
+    assert hay_caea_vigente(1, fecha=date(2026, 6, 25), caea_model=caea_model) is False
 
 
 def test_restaurar_modo_ws_vuelve_a_puntos_originales_y_cierra_respaldo():

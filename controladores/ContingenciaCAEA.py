@@ -89,6 +89,24 @@ def _tipo(registro):
     return (getattr(registro, 'tipo', '') or '').strip().upper()
 
 
+def _fecha_base(fecha=None):
+    if fecha is None:
+        return datetime.now().date()
+    if isinstance(fecha, datetime):
+        return fecha.date()
+    return fecha
+
+
+def _fecha_en_rango(fecha, desde, hasta):
+    if not desde or not hasta:
+        return True
+    if isinstance(desde, datetime):
+        desde = desde.date()
+    if isinstance(hasta, datetime):
+        hasta = hasta.date()
+    return desde <= fecha <= hasta
+
+
 def obtener_punto_caea_equivalente(ptovta_ws, empresa_id, ptovta_model=None):
     ptovta_model = ptovta_model or PtoVtaFasa
     ptovta_normalizado = normalizar_ptovta(ptovta_ws)
@@ -139,13 +157,21 @@ def obtener_punto_caea_equivalente(ptovta_ws, empresa_id, ptovta_model=None):
 
 def hay_caea_vigente(empresa_id, fecha=None, caea_model=None):
     caea_model = caea_model or CAEA
+    fecha = _fecha_base(fecha)
     periodo, orden = calcular_periodo_orden_actual(fecha)
-    return caea_model.select().where(
+    registro = caea_model.select().where(
         caea_model.periodo == periodo,
         caea_model.orden == orden,
         caea_model.empresa == empresa_id,
         caea_model.CAEA != '',
-    ).first() is not None
+    ).first()
+    if not registro:
+        return False
+    return _fecha_en_rango(
+        fecha,
+        getattr(registro, 'fchvigdesde', None),
+        getattr(registro, 'fchvighasta', None),
+    )
 
 
 def activar_modo_caea(
