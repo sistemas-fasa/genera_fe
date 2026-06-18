@@ -1,6 +1,8 @@
 from datetime import date, datetime
 from pathlib import Path
 import ast
+import subprocess
+import sys
 
 import pytest
 
@@ -46,6 +48,34 @@ class CAEAModelFake:
     def create(self, **datos):
         self.creados.append(datos)
         return type("RegistroCAEA", (), datos)()
+
+
+class QueryCAEADinamicaFake:
+    def __init__(self, modelo):
+        self.modelo = modelo
+        self.condiciones = None
+
+    def where(self, *condiciones):
+        self.condiciones = condiciones
+        self.modelo.consultas.append(condiciones)
+        return self
+
+    def first(self):
+        esperados = {campo: valor for campo, operador, valor in self.condiciones if operador == "=="}
+        for registro in self.modelo.creados:
+            if all(registro.get(campo) == valor for campo, valor in esperados.items()):
+                if registro.get("CAEA"):
+                    return type("RegistroCAEA", (), registro)()
+        return None
+
+
+class CAEAModelDinamicoFake(CAEAModelFake):
+    def __init__(self):
+        self.creados = []
+        self.consultas = []
+
+    def select(self):
+        return QueryCAEADinamicaFake(self)
 
 
 class FEv1Fake:
@@ -146,6 +176,55 @@ def test_si_corresponde_y_no_existe_solicita_guarda_y_notifica_una_vez():
     assert modelo.creados[0]["orden"] == "1"
     assert modelo.creados[0]["ptovta"] == "0001"
     assert emails == [registro]
+
+
+def test_fecha_simulada_segunda_quincena_solicita_una_vez_y_luego_es_idempotente():
+    from controladores.CAEAProgramado import solicitar_caea_si_corresponde
+
+    modelo = CAEAModelDinamicoFake()
+    fe = FEv1Fake()
+    fe.Orden = "2"
+    fe.FchVigDesde = date(2026, 6, 16)
+    fe.FchVigHasta = date(2026, 6, 30)
+    fe.FchTopeInf = date(2026, 7, 5)
+    fe.FchProceso = datetime(2026, 6, 25, 10, 30)
+    fe.Obs = ""
+    emails = []
+
+    primer_registro = solicitar_caea_si_corresponde(
+        empresa_id=1,
+        fecha=date(2026, 6, 25),
+        caea_model=modelo,
+        fe_factory=lambda: fe,
+        notificador=emails.append,
+        ptovta_resolver=lambda empresa_id: "9999",
+    )
+    segundo_registro = solicitar_caea_si_corresponde(
+        empresa_id=1,
+        fecha=date(2026, 6, 25),
+        caea_model=modelo,
+        fe_factory=lambda: fe,
+        notificador=emails.append,
+        ptovta_resolver=lambda empresa_id: "0001",
+    )
+
+    assert primer_registro.CAEA == "12345678901234"
+    assert segundo_registro is None
+    assert fe.calls == [("202606", "2")]
+    assert len(modelo.creados) == 1
+    assert modelo.creados[0]["empresa"] == 1
+    assert modelo.creados[0]["periodo"] == "202606"
+    assert modelo.creados[0]["orden"] == "2"
+    assert modelo.creados[0]["ptovta"] == "9999"
+    assert emails == [primer_registro]
+    assert modelo.consultas[0] == (
+        ("periodo", "==", "202606"),
+        ("orden", "==", "2"),
+        ("empresa", "==", 1),
+        ("CAEA", "!=", ""),
+    )
+    assert all(("ptovta", "==", "9999") not in consulta for consulta in modelo.consultas)
+    assert all(("ptovta", "==", "0001") not in consulta for consulta in modelo.consultas)
 
 
 def test_no_corresponde_por_fecha_no_consulta_afip_ni_email():
@@ -262,3 +341,51 @@ def test_fev1_caea_usa_timeout_y_falla_si_no_conecta():
     assert "timeout=_afip_timeout()" in informar
     assert "if not ok:" in informar
     assert "raise RuntimeError(self.Excepcion)" in informar
+
+
+def test_script_caea_programado_dry_run_permita_fecha_simulada_sin_afip_ni_email():
+    root = Path(__file__).resolve().parents[1]
+    script = root / "scripts" / "probar_caea_programado.py"
+
+    resultado = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--empresa",
+            "1",
+            "--fecha",
+            "2026-06-25",
+            "--dry-run",
+        ],
+        cwd=str(root),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert resultado.returncode == 0
+    assert "Fecha simulada: 2026-06-25" in resultado.stdout
+    assert "Periodo: 202606" in resultado.stdout
+    assert "Orden: 2" in resultado.stdout
+    assert "Corresponde solicitar: si" in resultado.stdout
+    assert "Buscaria CAEA existente: si" in resultado.stdout
+    assert "Solicitaria AFIP si no existe CAEA: si" in resultado.stdout
+    assert "Enviaria email si registra CAEA nuevo: si" in resultado.stdout
+    assert "No se llamo a AFIP, no se escribio en base y no se envio email." in resultado.stdout
+
+
+def test_script_caea_programado_exige_confirmacion_para_ejecucion_real():
+    root = Path(__file__).resolve().parents[1]
+    script = root / "scripts" / "probar_caea_programado.py"
+
+    resultado = subprocess.run(
+        [sys.executable, str(script), "--empresa", "1", "--fecha", "2026-06-25"],
+        cwd=str(root),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert resultado.returncode != 0
+    assert "--confirmar" in resultado.stderr
+    assert "puede llamar a AFIP real" in resultado.stderr
