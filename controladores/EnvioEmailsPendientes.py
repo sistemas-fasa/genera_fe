@@ -529,16 +529,21 @@ def enviar_email_en_hilo(email_id):
         logging.info(f"📬 Destinatarios: {destinatarios_lista}")
 
         # --- Control de tasa por hora (por empresa) ---
+        # El default es 80 y no 200: el relay SMTP de feralex acepta 100
+        # correos por hora y a partir de ahi responde
+        #   550 Ha alcanzado el limite de 100 por hora
+        # Un limite local mas alto que el del servidor garantiza el rechazo y
+        # multiplica los reintentos. Hay que quedar por debajo.
         try:
             try:
                 limit_str = ParamSist.ObtenerParametro("EMAIL_LIMIT_PER_HOUR", "")
                 limit_per_hour = (
                     int(limit_str)
                     if limit_str
-                    else int(os.getenv("SMTP_HOUR_LIMIT", "200"))
+                    else int(os.getenv("SMTP_HOUR_LIMIT", "80"))
                 )
             except Exception:
-                limit_per_hour = int(os.getenv("SMTP_HOUR_LIMIT", "200"))
+                limit_per_hour = int(os.getenv("SMTP_HOUR_LIMIT", "80"))
 
             ahora_lim = datetime.datetime.now()
             ventana = ahora_lim - datetime.timedelta(hours=1)
