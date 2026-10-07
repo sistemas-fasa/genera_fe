@@ -603,8 +603,19 @@ def enviar_email_en_hilo(email_id):
         send_success = False
 
         for attempt_idx in range(1, max_rate_attempts + 1):
-            # Puerto 465 requiere SSL directo, otros puertos usan STARTTLS
+            # Puerto 465 requiere SSL directo, otros puertos usan STARTTLS.
+            # El puerto 587 sin TLS implicito queda a criterio de la config,
+            # pero 587 NUNCA va en claro: es el puerto de submission y Google
+            # (como cualquier relay serio) rechaza el AUTH si no viaja
+            # cifrado. Por eso se fuerza STARTTLS en 587 aunque el .env diga
+            # SMTP_USE_TLS=0, que es lo que tiene la instalacion actual.
             use_ssl = smtp_port == 465
+            if smtp_port == 587 and not smtp_use_tls:
+                logging.warning(
+                    "Puerto 587 sin SMTP_USE_TLS=1: se fuerza STARTTLS porque "
+                    "el login SMTP no puede ir en claro"
+                )
+                smtp_use_tls = True
 
             if smtp_port:
                 smtp_conn_args = (smtp_host, int(smtp_port))
