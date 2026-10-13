@@ -95,26 +95,147 @@ class FEv1Fake:
         self.calls.append((periodo, orden))
         if self.falla:
             raise RuntimeError("AFIP caido")
+        # ARCA devuelve el periodo y orden pedidos.
+        self.Periodo = periodo
+        self.Orden = orden
         return self.CAEA
 
 
 def test_ventanas_de_fecha_para_solicitud_caea():
-    from controladores.CAEAProgramado import calcular_periodo_orden_actual, corresponde_solicitar_caea
+    """Ventana ARCA: desde 5 dias corridos antes del inicio de cada quincena
+    hasta el final de la misma."""
+    from controladores.CAEAProgramado import periodos_ordenes_a_solicitar
 
     casos = [
-        (date(2026, 6, 9), False, ("202606", "1")),
-        (date(2026, 6, 10), True, ("202606", "1")),
-        (date(2026, 6, 15), True, ("202606", "1")),
-        (date(2026, 6, 16), False, ("202606", "2")),
-        (date(2026, 6, 25), True, ("202606", "2")),
-        (date(2026, 7, 26), True, ("202607", "2")),
-        (date(2026, 2, 23), True, ("202602", "2")),
-        (date(2028, 2, 24), True, ("202802", "2")),
+        # El 26 solo esta abierta la ventana de la segunda quincena de mayo.
+        (date(2026, 5, 26), [("202605", "2")]),
+        # La ventana de la primera quincena de junio abre el 27 de mayo.
+        (date(2026, 5, 27), [("202605", "2"), ("202606", "1")]),
+        (date(2026, 5, 31), [("202605", "2"), ("202606", "1")]),
+        (date(2026, 6, 1), [("202606", "1")]),
+        (date(2026, 6, 10), [("202606", "1")]),
+        # El dia 11 abre la ventana de la segunda quincena: hay dos candidatas.
+        (date(2026, 6, 11), [("202606", "1"), ("202606", "2")]),
+        (date(2026, 6, 15), [("202606", "1"), ("202606", "2")]),
+        (date(2026, 6, 16), [("202606", "2")]),
+        (date(2026, 6, 25), [("202606", "2")]),
+        # La ventana de julio abre el 26 de junio.
+        (date(2026, 6, 26), [("202606", "2"), ("202607", "1")]),
+        (date(2026, 6, 27), [("202606", "2"), ("202607", "1")]),
+        (date(2026, 7, 26), [("202607", "2")]),
+        (date(2026, 7, 27), [("202607", "2"), ("202608", "1")]),
+        # Bisiesto: febrero de 2028 tiene 29 dias.
+        (date(2028, 2, 24), [("202802", "2")]),
+        (date(2028, 2, 25), [("202802", "2"), ("202803", "1")]),
+        # Cruce de año: la ventana de enero de 2027 abre el 27 de diciembre.
+        (date(2026, 12, 26), [("202612", "2")]),
+        (date(2026, 12, 27), [("202612", "2"), ("202701", "1")]),
+        (date(2027, 1, 5), [("202701", "1")]),
     ]
 
-    for fecha, corresponde, periodo_orden in casos:
-        assert calcular_periodo_orden_actual(fecha) == periodo_orden
-        assert corresponde_solicitar_caea(fecha) is corresponde
+    for fecha, esperados in casos:
+        assert periodos_ordenes_a_solicitar(fecha) == esperados, fecha
+
+
+def test_si_todas_las_quincenas_candidatas_tienen_caea_no_llama_afip():
+    """Con la ventana de ARCA todos los dias del año caen en alguna ventana,
+    asi que la unica forma de no pedir nada es que las candidatas ya existan."""
+    from controladores.CAEAProgramado import solicitar_caea_si_corresponde
+
+    modelo = CAEAModelFake(query_resultado=object())
+    fe = FEv1Fake()
+    emails = []
+
+    assert (
+        solicitar_caea_si_corresponde(
+            empresa_id=1,
+            fecha=date(2026, 6, 25),
+            caea_model=modelo,
+            fe_factory=lambda: fe,
+            notificador=emails.append,
+        )
+        is None
+    )
+    assert fe.calls == []
+    assert emails == []
+    assert modelo.creados == []
+
+
+def test_no_se_pide_mas_de_un_caea_por_quincena():
+    """ARCA: un unico CAEA por contribuyente y quincena.
+
+    En la ventana de ARCA hay hasta dos quincenas candidatas a la vez, asi que
+    esta es la garantia que hay que sostener: por mas que se llame todos los
+    dias, cada (periodo, orden) se pide una sola vez.
+    """
+    from controladores.CAEAProgramado import solicitar_caea_si_corresponde
+
+    modelo = CAEAModelDinamicoFake()
+    fe = FEv1Fake()
+    emails = []
+
+    for dia in range(1, 31):
+        solicitar_caea_si_corresponde(
+            empresa_id=1,
+            fecha=date(2026, 6, dia),
+            caea_model=modelo,
+            fe_factory=lambda: fe,
+            notificador=emails.append,
+        )
+
+    # El 1 abre la de junio 1ra, el 11 la de junio 2da, el 26 la de julio 1ra.
+    assert fe.calls == [("202606", "1"), ("202606", "2"), ("202607", "1")]
+
+    pedidas = set()
+    for periodo, orden in fe.calls:
+        clave = (periodo, orden)
+        assert clave not in pedidas, "CAEA pedido dos veces para {}".format(clave)
+        pedidas.add(clave)
+
+    por_quincena = {}
+    for registro in modelo.creados:
+        clave = (registro["periodo"], registro["orden"])
+        assert clave not in por_quincena, "CAEA duplicado para {}".format(clave)
+        por_quincena[clave] = registro
+
+    assert set(por_quincena) == pedidas
+    assert len(emails) == len(pedidas)
+
+
+def test_en_el_solapamiento_pide_la_quincena_siguiente_si_la_actual_ya_existe():
+    """Entre el dia 11 y el 15 hay dos ventanas abiertas. Si la primera
+    quincena ya tiene CAEA, hay que poder pedir el de la segunda."""
+    from controladores.CAEAProgramado import solicitar_caea_si_corresponde
+
+    modelo = CAEAModelDinamicoFake()
+    modelo.creados.append(
+        {
+            "CAEA": "11111111111111",
+            "periodo": "202606",
+            "orden": "1",
+            "empresa": 1,
+        }
+    )
+
+    fe = FEv1Fake()
+    fe.Orden = "2"
+    fe.FchVigDesde = date(2026, 6, 16)
+    fe.FchVigHasta = date(2026, 6, 30)
+    emails = []
+
+    registro = solicitar_caea_si_corresponde(
+        empresa_id=1,
+        fecha=date(2026, 6, 15),
+        caea_model=modelo,
+        fe_factory=lambda: fe,
+        notificador=emails.append,
+    )
+
+    assert fe.calls == [("202606", "2")]
+    assert registro is not None
+    assert registro.periodo == "202606"
+    assert registro.orden == "2"
+    assert emails == [registro]
 
 
 def test_idempotencia_no_usa_ptovta_para_detectar_caea_existente():
@@ -227,25 +348,6 @@ def test_fecha_simulada_segunda_quincena_solicita_una_vez_y_luego_es_idempotente
     assert all(("ptovta", "==", "0001") not in consulta for consulta in modelo.consultas)
 
 
-def test_no_corresponde_por_fecha_no_consulta_afip_ni_email():
-    from controladores.CAEAProgramado import solicitar_caea_si_corresponde
-
-    modelo = CAEAModelFake(query_resultado=None)
-    fe = FEv1Fake()
-    emails = []
-
-    assert solicitar_caea_si_corresponde(
-        empresa_id=1,
-        fecha=date(2026, 6, 9),
-        caea_model=modelo,
-        fe_factory=lambda: fe,
-        notificador=emails.append,
-    ) is None
-    assert fe.calls == []
-    assert emails == []
-    assert modelo.creados == []
-
-
 def test_fallo_de_email_no_impide_devolver_caea_guardado(caplog):
     from controladores.CAEAProgramado import solicitar_caea_si_corresponde
 
@@ -320,12 +422,30 @@ def test_main_no_verifica_caea_sincronicamente_en_constructor():
 def test_verificacion_caea_programada_mantiene_try_except_y_log():
     root = Path(__file__).resolve().parents[1]
     main_path = root / "controladores" / "Main.py"
-    main_source = main_path.read_text(encoding="utf-8")
     verificar = _function_def(main_path, "_verificar_caea_programado")
-    source = ast.get_source_segment(main_source, verificar)
 
     assert any(isinstance(node, ast.Try) for node in ast.walk(verificar))
-    assert "logging.exception(\"No se pudo verificar/solicitar CAEA programado al iniciar\")" in source
+
+    # Se busca el texto del log via AST para no depender del estilo de comillas
+    # ni del wrapping de la llamada.
+    mensajes = []
+    for node in ast.walk(verificar):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        es_logging_exception = (
+            isinstance(func, ast.Attribute)
+            and func.attr == "exception"
+            and isinstance(func.value, ast.Name)
+            and func.value.id == "logging"
+        )
+        if not es_logging_exception or not node.args:
+            continue
+        primero = node.args[0]
+        if isinstance(primero, ast.Constant) and isinstance(primero.value, str):
+            mensajes.append(primero.value)
+
+    assert "No se pudo verificar/solicitar CAEA programado al iniciar" in mensajes
 
 
 def test_fev1_caea_usa_timeout_y_falla_si_no_conecta():

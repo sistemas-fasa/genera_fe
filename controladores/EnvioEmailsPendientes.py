@@ -9,6 +9,7 @@ import logging
 import traceback
 import mimetypes
 import time
+from email.utils import formatdate, make_msgid
 from dotenv import load_dotenv
 from peewee import fn
 
@@ -28,67 +29,159 @@ def _limpiar_config_smtp(valor):
     """Normaliza campos SMTP copiados con saltos de linea o espacios."""
     if valor is None:
         return valor
-    return str(valor).replace('\r', '').replace('\n', '').strip()
+    return str(valor).replace("\r", "").replace("\n", "").strip()
+
+
+def _es_email(valor):
+    """True si el valor tiene forma de dirección de correo (para no usar API keys como From)."""
+    if not valor:
+        return False
+    texto = str(valor).strip()
+    return "@" in texto and "." in texto.split("@")[-1]
+
+
+def _resolver_remitente(quien_envia, smtp_from_env, empresa_usuario, smtp_user):
+    """Resuelve el From alineado: quien_envia > SMTP_FROM > usuario empresa (si es email) > user (si es email)."""
+    for candidato in (quien_envia, smtp_from_env, empresa_usuario, smtp_user):
+        if _es_email(candidato):
+            return str(candidato).strip()
+    for candidato in (quien_envia, smtp_from_env, empresa_usuario, smtp_user):
+        if candidato and str(candidato).strip():
+            return str(candidato).strip()
+    return ""
 
 
 def reactivar_emails_retrasados():
     """Reactiva correos en estado 'retrasado' cuyo momento de reintento ya llegó."""
     try:
         ahora_tmp = datetime.datetime.now()
-        reactivated = EmailPendiente.update(
-            estado='pendiente',
-            procesando_desde=None
-        ).where(
-            (EmailPendiente.estado == 'retrasado') &
-            (EmailPendiente.procesando_desde <= ahora_tmp)
-        ).execute()
+        reactivated = (
+            EmailPendiente.update(estado="pendiente", procesando_desde=None)
+            .where(
+                (EmailPendiente.estado == "retrasado")
+                & (EmailPendiente.procesando_desde <= ahora_tmp)
+            )
+            .execute()
+        )
         if reactivated:
-            logging.info(f"♻️ Reactivados {reactivated} emails retrasados cuya hora de reintento llegó")
+            logging.info(
+                f"♻️ Reactivados {reactivated} emails retrasados cuya hora de reintento llegó"
+            )
         return reactivated
     except Exception:
         logging.exception("⚠️ Error al reactivar emails retrasados")
         return 0
 
 
-def encolar_email(destinatario, asunto, cuerpo_html=None, cuerpo_texto=None, 
-                  adjunto_ruta=None, adjunto_nombre=None, cc=None, cco=None, quien_envia=None):
+def _normalizar_ruta_adjunto(ruta):
+    """
+    Devuelve la ruta ABSOLUTA de un adjunto.
+
+    Las rutas relativas (ej. 'facturas\\003-0019-00013158.pdf') dependen del
+    directorio de trabajo del proceso, que puede cambiar entre que se encola el
+    email y que se envía. Guardarlas relativas provoca que el adjunto se pierda
+    en silencio: el archivo no se encuentra, se omite y el mail sale igual
+    marcado como enviado. Absolutizamos al encolar.
+    """
+    if not ruta:
+        return ""
+    return os.path.abspath(os.path.expanduser(str(ruta).strip()))
+
+
+def _normalizar_rutas_adjuntos(adjunto_ruta):
+    """Normaliza cada ruta de una lista separada por comas. Devuelve (rutas, faltantes)."""
+    if not adjunto_ruta:
+        return [], []
+
+    rutas, faltantes = [], []
+    for r in str(adjunto_ruta).split(","):
+        r = r.strip()
+        if not r:
+            continue
+        absoluta = _normalizar_ruta_adjunto(r)
+        if not os.path.isfile(absoluta):
+            faltantes.append(absoluta)
+        rutas.append(absoluta)
+    return rutas, faltantes
+
+
+def encolar_email(
+    destinatario,
+    asunto,
+    cuerpo_html=None,
+    cuerpo_texto=None,
+    adjunto_ruta=None,
+    adjunto_nombre=None,
+    cc=None,
+    cco=None,
+    quien_envia=None,
+):
     """
     Función helper para encolar un email pendiente desde cualquier parte del sistema.
-    
+
     Args:
         destinatario: Email del destinatario (o varios separados por coma)
         asunto: Asunto del email
         cuerpo_html: Contenido HTML del email (opcional)
         cuerpo_texto: Contenido en texto plano (opcional)
-        adjunto_ruta: Ruta al archivo adjunto (opcional)
+        adjunto_ruta: Ruta al archivo adjunto (opcional). Se normaliza a absoluta.
         adjunto_nombre: Nombre del archivo adjunto (opcional)
         cc: Emails en copia (separados por coma) (opcional)
         cco: Emails en copia oculta (separados por coma) (opcional)
         quien_envia: Email del remitente personalizado (opcional, si no se usa el configurado)
-    
+
     Returns:
         EmailPendiente: El registro creado
+
+    Raises:
+        FileNotFoundError: si se indicó un adjunto y el archivo no existe. Es
+            preferible fallar al encolar que enviar un mail que promete un
+            comprobante adjunto que nunca viaja.
     """
+    rutas, faltantes = _normalizar_rutas_adjuntos(adjunto_ruta)
+    if faltantes:
+        raise FileNotFoundError(
+            "No se puede encolar el email: adjunto(s) inexistente(s): {}. "
+            "El comprobante no se enviaría.".format(", ".join(faltantes))
+        )
+
     email = EmailPendiente.create(
         destinatario=destinatario,
         asunto=asunto,
         cuerpo_html=cuerpo_html,
         cuerpo_texto=cuerpo_texto,
-        adjunto_ruta=adjunto_ruta,
+        adjunto_ruta=",".join(rutas) if rutas else None,
         adjunto_nombre=adjunto_nombre,
         cc=cc,
         cco=cco,
-        quien_envia=quien_envia
+        quien_envia=quien_envia,
     )
     logging.info(f"📥 Email encolado ID {email.id} para {destinatario}")
     return email
 
 
 def _parsear_destinatarios(destinatarios_str):
-    """Parsea un string de destinatarios separados por coma a una lista"""
+    """
+    Parsea un string de destinatarios separados por coma a una lista.
+
+    Deduplica preservando el orden: los registros traían el mismo destino
+    repetido (p. ej. 'a@x.com,b@y.com,a@x.com,'), lo que dispara la alarma de
+    "intentos de envío duplicados" en los filtros antispam.
+    """
     if not destinatarios_str:
         return []
-    return [d.strip() for d in destinatarios_str.split(',') if d.strip()]
+    vistos = set()
+    unicos = []
+    for d in destinatarios_str.split(","):
+        d = d.strip()
+        if not d:
+            continue
+        clave = d.lower()
+        if clave in vistos:
+            continue
+        vistos.add(clave)
+        unicos.append(d)
+    return unicos
 
 
 def _notificar_fallo_final(email_registro, error_msg):
@@ -99,11 +192,13 @@ def _notificar_fallo_final(email_registro, error_msg):
     try:
         email_admin = ParamSist.ObtenerParametro("EMAIL_ADMIN_NOTIFICACIONES")
         if not email_admin:
-            logging.warning("⚠️ No hay EMAIL_ADMIN_NOTIFICACIONES configurado para notificar fallos")
+            logging.warning(
+                "⚠️ No hay EMAIL_ADMIN_NOTIFICACIONES configurado para notificar fallos"
+            )
             return
-        
+
         asunto = f"⚠️ Fallo de envío de email ID {email_registro.id}"
-        
+
         cuerpo_html = f"""
         <!DOCTYPE html>
         <html>
@@ -150,16 +245,16 @@ def _notificar_fallo_final(email_registro, error_msg):
         </body>
         </html>
         """
-        
+
         # Encolar la notificación (sin CC/CCO para evitar loops)
         encolar_email(
             destinatario=email_admin,
             asunto=asunto,
             cuerpo_html=cuerpo_html,
-            cuerpo_texto=f"Fallo de envío de email ID {email_registro.id} a {email_registro.destinatario}. Error: {error_msg[:500]}"
+            cuerpo_texto=f"Fallo de envío de email ID {email_registro.id} a {email_registro.destinatario}. Error: {error_msg[:500]}",
         )
         logging.info(f"📧 Notificación de fallo encolada para {email_admin}")
-        
+
     except Exception as e:
         logging.error(f"❌ Error al encolar notificación de fallo: {e}")
 
@@ -169,98 +264,130 @@ def enviar_email_en_hilo(email_id):
     # Cada hilo debe tener su propia conexión a la DB (Peewee no es thread-safe por defecto)
     db = ModeloBase().getDb()
     email_registro = None
-    
+
     try:
         # Reconectar en cada hilo
         if db.is_closed():
             db.connect()
-        
+
         # BLOQUEO OPTIMISTA: Intentar marcar el registro como "procesando" de forma atómica
         # Solo actualiza si el estado es 'pendiente' y procesando_desde es NULL
         ahora = datetime.datetime.now()
-        rows_updated = EmailPendiente.update(
-            procesando_desde=ahora
-        ).where(
-            (EmailPendiente.id == email_id) &
-            (EmailPendiente.estado == 'pendiente') &
-            (EmailPendiente.intentos < 3) &
-            (EmailPendiente.procesando_desde.is_null())
-        ).execute()
-        
+        rows_updated = (
+            EmailPendiente.update(procesando_desde=ahora)
+            .where(
+                (EmailPendiente.id == email_id)
+                & (EmailPendiente.estado == "pendiente")
+                & (EmailPendiente.intentos < 3)
+                & (EmailPendiente.procesando_desde.is_null())
+            )
+            .execute()
+        )
+
         # Si no se actualizó ninguna fila, otro hilo ya está procesando este email
         if rows_updated == 0:
             # Verificar estado real para debugging
             try:
                 estado_actual = EmailPendiente.get_by_id(email_id)
-                logging.debug(f"⏭️ Correo ID {email_id} no reclamado. Estado: {estado_actual.estado}, intentos: {estado_actual.intentos}, procesando_desde: {estado_actual.procesando_desde}")
+                logging.debug(
+                    f"⏭️ Correo ID {email_id} no reclamado. Estado: {estado_actual.estado}, intentos: {estado_actual.intentos}, procesando_desde: {estado_actual.procesando_desde}"
+                )
             except:
                 pass
             return
-            
+
         # Ahora sí, obtenemos el registro con seguridad de que somos los únicos procesándolo
         email_registro = EmailPendiente.get_by_id(email_id)
-        
+
         logging.info(f"🔒 Correo ID {email_id} reclamado para procesamiento")
 
-        logging.info(f"📧 Preparando envío de correo a {email_registro.destinatario} (ID: {email_id})")
+        logging.info(
+            f"📧 Preparando envío de correo a {email_registro.destinatario} (ID: {email_id})"
+        )
 
         # Crear mensaje con estructura multipart/mixed -> multipart/alternative para el body
-        msg = MIMEMultipart('mixed')
-        msg['To'] = email_registro.destinatario
-        msg['Subject'] = email_registro.asunto
-        
+        msg = MIMEMultipart("mixed")
+        msg["To"] = email_registro.destinatario
+        msg["Subject"] = email_registro.asunto
+
+        # Cabeceras de identidad del mensaje. Sin Date ni Message-ID los
+        # filtros antispam (Gmail en particular) penalizan o directamente
+        # descartan el correo, y el cliente reporta que "no le llegó".
+        msg["Date"] = formatdate(localtime=True)
+        msg["Message-ID"] = make_msgid(domain="ferreteriaavenida.com.ar")
+
         # Agregar CC si existe
         if email_registro.cc:
-            msg['Cc'] = email_registro.cc
-        
+            msg["Cc"] = email_registro.cc
+
         # Nota: BCC no se agrega como header, solo se incluye en la lista de destinatarios
 
         # Parte alternativa para texto/HTML
-        alternative = MIMEMultipart('alternative')
+        alternative = MIMEMultipart("alternative")
         if email_registro.cuerpo_texto:
-            alternative.attach(MIMEText(email_registro.cuerpo_texto, 'plain', 'utf-8'))
+            alternative.attach(MIMEText(email_registro.cuerpo_texto, "plain", "utf-8"))
         if email_registro.cuerpo_html:
-            alternative.attach(MIMEText(email_registro.cuerpo_html, 'html', 'utf-8'))
+            alternative.attach(MIMEText(email_registro.cuerpo_html, "html", "utf-8"))
 
         msg.attach(alternative)
 
         # Adjunto (si existe) - soporta múltiples rutas separadas por coma
+        # Un adjunto declarado pero inexistente NO se omite en silencio: se
+        # aborta el envío. Antes el mail salía sin el PDF y quedaba en estado
+        # 'enviado', por eso los clientes veían "no me llegó el comprobante".
         if email_registro.adjunto_ruta:
-            rutas = [r.strip() for r in str(email_registro.adjunto_ruta).split(',') if r.strip()]
-            for idx, ruta in enumerate(rutas, start=1):
-                ruta_adjunto = os.path.abspath(ruta)
+            rutas, faltantes = _normalizar_rutas_adjuntos(email_registro.adjunto_ruta)
+            if faltantes:
+                raise FileNotFoundError(
+                    "Adjunto(s) inexistente(s): {}. No se envía el correo para "
+                    "no entregar un comprobante sin su PDF.".format(
+                        ", ".join(faltantes)
+                    )
+                )
+            if len(rutas) != len(str(email_registro.adjunto_ruta).split(",")):
+                # Re-normalizamos el campo para que el próximo reintento use
+                # rutas absolutas y no dependa del CWD.
+                EmailPendiente.update(adjunto_ruta=",".join(rutas)).where(
+                    EmailPendiente.id == email_id
+                ).execute()
+            for idx, ruta_adjunto in enumerate(rutas, start=1):
                 logging.info(f"🔍 Comprobando adjunto: {ruta_adjunto}")
-                if os.path.isfile(ruta_adjunto):
-                    try:
-                        mimetype, _ = mimetypes.guess_type(ruta_adjunto)
-                        if mimetype:
-                            maintype, subtype = mimetype.split('/', 1)
-                        else:
-                            maintype, subtype = 'application', 'octet-stream'
+                try:
+                    mimetype, _ = mimetypes.guess_type(ruta_adjunto)
+                    if mimetype:
+                        maintype, subtype = mimetype.split("/", 1)
+                    else:
+                        maintype, subtype = "application", "octet-stream"
 
-                        with open(ruta_adjunto, "rb") as f:
-                            part = MIMEBase(maintype, subtype)
-                            part.set_payload(f.read())
-                        encoders.encode_base64(part)
+                    with open(ruta_adjunto, "rb") as f:
+                        part = MIMEBase(maintype, subtype)
+                        part.set_payload(f.read())
+                    encoders.encode_base64(part)
 
-                        # Determinar nombre de archivo: si solo hay uno y se indicó adjunto_nombre, usarlo
-                        if len(rutas) == 1 and email_registro.adjunto_nombre:
-                            filename = email_registro.adjunto_nombre
-                        else:
-                            filename = email_registro.adjunto_nombre or os.path.basename(ruta_adjunto)
+                    # Determinar nombre de archivo: si solo hay uno y se indicó adjunto_nombre, usarlo
+                    if len(rutas) == 1 and email_registro.adjunto_nombre:
+                        filename = email_registro.adjunto_nombre
+                    else:
+                        filename = email_registro.adjunto_nombre or os.path.basename(
+                            ruta_adjunto
+                        )
 
-                        # Evitar duplicados si se adjuntan varios archivos con el mismo nombre
-                        if len(rutas) > 1:
-                            base, ext = os.path.splitext(filename)
-                            filename = f"{base}_{idx}{ext}"
+                    # Evitar duplicados si se adjuntan varios archivos con el mismo nombre
+                    if len(rutas) > 1:
+                        base, ext = os.path.splitext(filename)
+                        filename = f"{base}_{idx}{ext}"
 
-                        part.add_header('Content-Disposition', f'attachment; filename="{filename}"')
-                        msg.attach(part)
-                        logging.info(f"📎 Adjunto preparado: {ruta_adjunto} (nombre: {filename})")
-                    except Exception as att_e:
-                        logging.error(f"❌ Error al procesar adjunto {ruta_adjunto}: {att_e}\n{traceback.format_exc()}")
-                else:
-                    logging.warning(f"⚠️ Ruta de adjunto no encontrada: {ruta_adjunto}")
+                    part.add_header(
+                        "Content-Disposition", f'attachment; filename="{filename}"'
+                    )
+                    msg.attach(part)
+                    logging.info(
+                        f"📎 Adjunto preparado: {ruta_adjunto} (nombre: {filename})"
+                    )
+                except Exception as att_e:
+                    raise IOError(
+                        "Error al procesar adjunto {}: {}".format(ruta_adjunto, att_e)
+                    ) from att_e
 
         # Parsear todos los destinatarios (To + CC + BCC)
         destinatarios_lista = _parsear_destinatarios(email_registro.destinatario)
@@ -275,26 +402,30 @@ def enviar_email_en_hilo(email_id):
                     intentos=email_registro.intentos + 1,
                     ultimo_error=err,
                     procesando_desde=None,
-                    estado='fallido'
+                    estado="fallido",
                 ).where(EmailPendiente.id == email_id).execute()
             except Exception:
-                logging.exception("Error al actualizar estado por falta de destinatarios")
+                logging.exception(
+                    "Error al actualizar estado por falta de destinatarios"
+                )
             return
-        
+
         # Determinar configuración SMTP: primero intentar leer desde modelo Empresa, si no usar .env
-        smtp_host = os.getenv('SMTP_HOST')
-        smtp_port = int(os.getenv('SMTP_PORT')) if os.getenv('SMTP_PORT') else None
-        smtp_user = os.getenv('SMTP_USER')
-        smtp_password = os.getenv('SMTP_PASSWORD')
-        smtp_from = os.getenv('SMTP_FROM')
-        smtp_use_tls = os.getenv('SMTP_USE_TLS', '1') == '1'
+        smtp_host = os.getenv("SMTP_HOST")
+        smtp_port = int(os.getenv("SMTP_PORT")) if os.getenv("SMTP_PORT") else None
+        smtp_user = os.getenv("SMTP_USER")
+        smtp_password = os.getenv("SMTP_PASSWORD")
+        smtp_from = os.getenv("SMTP_FROM")
+        smtp_use_tls = os.getenv("SMTP_USE_TLS", "1") == "1"
 
         try:
             # Seleccionar la empresa asociada al email pendiente (empresa_id)
             empresa = None
-            if hasattr(email_registro, 'empresa_id') and email_registro.empresa_id:
+            if hasattr(email_registro, "empresa_id") and email_registro.empresa_id:
                 try:
-                    empresa = Empresa.get_or_none(Empresa.codigo == int(email_registro.empresa_id))
+                    empresa = Empresa.get_or_none(
+                        Empresa.codigo == int(email_registro.empresa_id)
+                    )
                 except Exception:
                     empresa = None
 
@@ -317,34 +448,69 @@ def enviar_email_en_hilo(email_id):
                 if empresa.pass_correo:
                     smtp_password = empresa.pass_correo
         except Exception:
-            logging.exception("⚠️ No se pudo leer configuración de Empresa para SMTP, usando .env si está disponible")
+            logging.exception(
+                "⚠️ No se pudo leer configuración de Empresa para SMTP, usando .env si está disponible"
+            )
 
         smtp_host = _limpiar_config_smtp(smtp_host)
         smtp_user = _limpiar_config_smtp(smtp_user)
         smtp_password = _limpiar_config_smtp(smtp_password)
-        smtp_from = _limpiar_config_smtp(smtp_from)
+        if smtp_password:
+            # Las app passwords de Gmail se muestran como "xxxx xxxx xxxx xxxx":
+            # el SMTP las requiere sin espacios.
+            smtp_password = "".join(smtp_password.split())
+        smtp_from_env = _limpiar_config_smtp(smtp_from)
+        empresa_usuario = _limpiar_config_smtp(
+            getattr(empresa, "usuario_correo", "") if empresa else ""
+        )
 
-        # Asegurar From: debe ser el mismo que el usuario SMTP cuando esté disponible
-        if smtp_user:
-            smtp_from = smtp_user
+        # From ALINEADO con el envelope (regla anti-spam/DMARC):
+        # el dominio del header From debe coincidir con el dominio que
+        # autentica (SPF/DKIM). Nunca mezclar: autenticar con una cuenta
+        # (ej. facturas@fasa.ar) y poner From de otro dominio
+        # (ej. ventas@ferreteriaavenida.com.ar) provoca fallo DMARC -> spam.
+        # Prioridad: quien_envia del email > SMTP_FROM (.env, opcional) >
+        # usuario_correo de la empresa (solo si es email, no API key) >
+        # usuario SMTP (idem). Sin .env, manda usuario_correo: por eso cada
+        # empresa debe autenticar con su propia dirección.
+        email_from = _resolver_remitente(
+            getattr(email_registro, "quien_envia", None),
+            smtp_from_env,
+            empresa_usuario,
+            smtp_user,
+        )
+        if email_from:
+            logging.info(f"📧 From alineado: {email_from}")
         else:
-            smtp_from = smtp_from or os.getenv('SMTP_FROM') or ''
-        
-        # Si el email tiene especificado quien_envia, usarlo para From y Reply-To
-        # En caso contrario, usar el smtp_from configurado
-        if email_registro.quien_envia:
-            email_from = email_registro.quien_envia.strip()
-            logging.info(f"📧 Usando quien_envia personalizado: {email_from}")
+            logging.warning("⚠️ No se pudo resolver una dirección From válida")
+
+        # Nombre visible opcional vía .env: "Ferreteria Avenida <ventas@...>"
+        smtp_from_name = _limpiar_config_smtp(os.getenv("SMTP_FROM_NAME"))
+        header_from = (
+            f"{smtp_from_name} <{email_from}>"
+            if smtp_from_name and email_from and "@" in email_from
+            else email_from
+        )
+
+        # Reply-To opcional vía .env; por defecto igual al From.
+        smtp_reply_to = _limpiar_config_smtp(os.getenv("SMTP_REPLY_TO"))
+        if _es_email(smtp_reply_to):
+            reply_to = smtp_reply_to
         else:
-            email_from = smtp_from
-        
+            reply_to = email_from
+        envelope_from = email_from
+
         # Establecer From y Reply-To en el mensaje
-        msg['From'] = email_from
-        msg['Reply-To'] = email_from
+        msg["From"] = header_from
+        msg["Reply-To"] = reply_to
 
         logging.info(f"🔗 Conectando a servidor SMTP: {smtp_host}:{smtp_port or ''}")
-        logging.info(f"ℹ️ Empresa seleccionada: {empresa.codigo if empresa else None} - {getattr(empresa, 'nombre', '')}")
-        logging.info(f"ℹ️ SMTP config: host={smtp_host} port={smtp_port} user={smtp_user} from={smtp_from} has_pass={bool(smtp_password)}")
+        logging.info(
+            f"ℹ️ Empresa seleccionada: {empresa.codigo if empresa else None} - {getattr(empresa, 'nombre', '')}"
+        )
+        logging.info(
+            f"ℹ️ SMTP config: host={smtp_host} port={smtp_port} user={smtp_user} from={email_from} reply_to={reply_to} has_pass={bool(smtp_password)}"
+        )
 
         # Si no hay host SMTP configurado, marcar como fallido con detalle
         if not smtp_host:
@@ -355,7 +521,7 @@ def enviar_email_en_hilo(email_id):
                     intentos=email_registro.intentos + 1,
                     ultimo_error=err,
                     procesando_desde=None,
-                    estado='fallido'
+                    estado="fallido",
                 ).where(EmailPendiente.id == email_id).execute()
             except Exception:
                 logging.exception("Error al actualizar estado por falta de SMTP_HOST")
@@ -363,45 +529,70 @@ def enviar_email_en_hilo(email_id):
         logging.info(f"📬 Destinatarios: {destinatarios_lista}")
 
         # --- Control de tasa por hora (por empresa) ---
+        # El default es 80 y no 200: el relay SMTP de feralex acepta 100
+        # correos por hora y a partir de ahi responde
+        #   550 Ha alcanzado el limite de 100 por hora
+        # Un limite local mas alto que el del servidor garantiza el rechazo y
+        # multiplica los reintentos. Hay que quedar por debajo.
         try:
             try:
-                limit_str = ParamSist.ObtenerParametro('EMAIL_LIMIT_PER_HOUR', '')
-                limit_per_hour = int(limit_str) if limit_str else int(os.getenv('SMTP_HOUR_LIMIT', '200'))
+                limit_str = ParamSist.ObtenerParametro("EMAIL_LIMIT_PER_HOUR", "")
+                limit_per_hour = (
+                    int(limit_str)
+                    if limit_str
+                    else int(os.getenv("SMTP_HOUR_LIMIT", "80"))
+                )
             except Exception:
-                limit_per_hour = int(os.getenv('SMTP_HOUR_LIMIT', '200'))
+                limit_per_hour = int(os.getenv("SMTP_HOUR_LIMIT", "80"))
 
             ahora_lim = datetime.datetime.now()
             ventana = ahora_lim - datetime.timedelta(hours=1)
-            empresa_code = getattr(email_registro, 'empresa_id', None)
+            empresa_code = getattr(email_registro, "empresa_id", None)
 
-            sent_count = EmailPendiente.select().where(
-                (EmailPendiente.empresa_id == empresa_code) &
-                (EmailPendiente.estado == 'enviado') &
-                (EmailPendiente.enviado_en >= ventana)
-            ).count()
+            sent_count = (
+                EmailPendiente.select()
+                .where(
+                    (EmailPendiente.empresa_id == empresa_code)
+                    & (EmailPendiente.estado == "enviado")
+                    & (EmailPendiente.enviado_en >= ventana)
+                )
+                .count()
+            )
 
             if sent_count >= limit_per_hour:
-                earliest = EmailPendiente.select(EmailPendiente.enviado_en).where(
-                    (EmailPendiente.empresa_id == empresa_code) &
-                    (EmailPendiente.estado == 'enviado') &
-                    (EmailPendiente.enviado_en >= ventana)
-                ).order_by(EmailPendiente.enviado_en.asc()).limit(1).first()
+                earliest = (
+                    EmailPendiente.select(EmailPendiente.enviado_en)
+                    .where(
+                        (EmailPendiente.empresa_id == empresa_code)
+                        & (EmailPendiente.estado == "enviado")
+                        & (EmailPendiente.enviado_en >= ventana)
+                    )
+                    .order_by(EmailPendiente.enviado_en.asc())
+                    .limit(1)
+                    .first()
+                )
 
                 if earliest and earliest.enviado_en:
-                    next_available = earliest.enviado_en + datetime.timedelta(hours=1, seconds=10)
+                    next_available = earliest.enviado_en + datetime.timedelta(
+                        hours=1, seconds=10
+                    )
                 else:
                     next_available = ahora_lim + datetime.timedelta(minutes=15)
 
                 EmailPendiente.update(
-                    estado='retrasado',
+                    estado="retrasado",
                     procesando_desde=next_available,
-                    ultimo_error=f"Reprogramado por límite horario ({sent_count}/{limit_per_hour})"
+                    ultimo_error=f"Reprogramado por límite horario ({sent_count}/{limit_per_hour})",
                 ).where(EmailPendiente.id == email_id).execute()
 
-                logging.warning(f"⏳ Límite horario alcanzado ({sent_count}/{limit_per_hour}). Email ID {email_id} reprogramado para {next_available}")
+                logging.warning(
+                    f"⏳ Límite horario alcanzado ({sent_count}/{limit_per_hour}). Email ID {email_id} reprogramado para {next_available}"
+                )
                 return
         except Exception:
-            logging.exception("⚠️ Error al comprobar límite horario de envíos; se continuará normalmente")
+            logging.exception(
+                "⚠️ Error al comprobar límite horario de envíos; se continuará normalmente"
+            )
 
         # Implementar reintentos locales para errores de límite de envío (SMTP 554)
         # No incrementamos el contador persistente `intentos` mientras hacemos
@@ -412,8 +603,19 @@ def enviar_email_en_hilo(email_id):
         send_success = False
 
         for attempt_idx in range(1, max_rate_attempts + 1):
-            # Puerto 465 requiere SSL directo, otros puertos usan STARTTLS
+            # Puerto 465 requiere SSL directo, otros puertos usan STARTTLS.
+            # El puerto 587 sin TLS implicito queda a criterio de la config,
+            # pero 587 NUNCA va en claro: es el puerto de submission y Google
+            # (como cualquier relay serio) rechaza el AUTH si no viaja
+            # cifrado. Por eso se fuerza STARTTLS en 587 aunque el .env diga
+            # SMTP_USE_TLS=0, que es lo que tiene la instalacion actual.
             use_ssl = smtp_port == 465
+            if smtp_port == 587 and not smtp_use_tls:
+                logging.warning(
+                    "Puerto 587 sin SMTP_USE_TLS=1: se fuerza STARTTLS porque "
+                    "el login SMTP no puede ir en claro"
+                )
+                smtp_use_tls = True
 
             if smtp_port:
                 smtp_conn_args = (smtp_host, int(smtp_port))
@@ -445,12 +647,46 @@ def enviar_email_en_hilo(email_id):
                         server.login(smtp_user, smtp_password)
                         logging.info(f"✓ Login SMTP exitoso como {smtp_user}")
                     except Exception:
-                        logging.exception(f"❌ Falló login SMTP - Usuario: '{smtp_user}' - Verifica las credenciales en la tabla 'empresas' (codigo={getattr(empresa, 'codigo', 'N/A')})")
+                        logging.exception(
+                            f"❌ Falló login SMTP - Usuario: '{smtp_user}' - Verifica las credenciales en la tabla 'empresas' (codigo={getattr(empresa, 'codigo', 'N/A')})"
+                        )
                         raise
 
+                # Envelope-from ALINEADO con header From (anti-spam/DMARC).
                 # sendmail requiere una LISTA de destinatarios, no un string con comas
-                logging.info(f"📤 Enviando mensaje - From: '{msg['From']}' Reply-To: '{msg['Reply-To']}' To: {destinatarios_lista} (attempt {attempt_idx}/{max_rate_attempts})")
-                server.sendmail(smtp_from, destinatarios_lista, msg.as_string())
+                logging.info(
+                    f"📤 Enviando mensaje - From: '{msg['From']}' Reply-To: '{msg['Reply-To']}' Envelope: '{envelope_from}' To: {destinatarios_lista} (attempt {attempt_idx}/{max_rate_attempts})"
+                )
+                # sendmail devuelve un dict con los destinatarios RECHAZADOS y
+                # solo lanza excepcion si fallan TODOS. Antes se descartaba ese
+                # retorno: un rechazo parcial dejaba el registro en 'enviado'
+                # aunque ese cliente nunca recibiera nada.
+                rechazados = (
+                    server.sendmail(envelope_from, destinatarios_lista, msg.as_string())
+                    or {}
+                )
+                if rechazados:
+                    detalle = "; ".join(
+                        "{}: {}".format(dest, err) for dest, err in rechazados.items()
+                    )
+                    if len(rechazados) == len(destinatarios_lista):
+                        raise smtplib.SMTPRecipientsRefused(rechazados)
+                    raise IOError(
+                        "Envío parcial: el servidor SMTP rechazó {} de {} "
+                        "destinatarios -> {}".format(
+                            len(rechazados), len(destinatarios_lista), detalle
+                        )
+                    )
+                    raise (
+                        smtplib.SMTPRecipientsRefused(rechazados)
+                        if len(rechazados) == len(destinatarios_lista)
+                        else IOError(
+                            "Envío parcial: el servidor SMTP rechazó {} de {} "
+                            "destinatarios -> {}".format(
+                                len(rechazados), len(destinatarios_lista), detalle
+                            )
+                        )
+                    )
                 logging.info(f"✓ Mensaje enviado exitosamente en intento {attempt_idx}")
                 send_success = True
                 break
@@ -465,14 +701,28 @@ def enviar_email_en_hilo(email_id):
                     if sde.args and len(sde.args) >= 1:
                         smtp_code = sde.args[0]
 
-                err_text = sde.smtp_error if hasattr(sde, 'smtp_error') else str(sde)
-                logging.error(f"❌ SMTPDataError (code={smtp_code}) al enviar correo ID {email_id}: {err_text}")
+                err_text = sde.smtp_error if hasattr(sde, "smtp_error") else str(sde)
+                logging.error(
+                    f"❌ SMTPDataError (code={smtp_code}) al enviar correo ID {email_id}: {err_text}"
+                )
 
                 # Si es un error por límite (554) intentamos reintentar tras esperar
-                if smtp_code == 554 or (isinstance(err_text, (bytes, bytearray)) and b'exced' in err_text.lower()) or ('exced' in str(err_text).lower() or 'limite' in str(err_text).lower()):
+                if (
+                    smtp_code == 554
+                    or (
+                        isinstance(err_text, (bytes, bytearray))
+                        and b"exced" in err_text.lower()
+                    )
+                    or (
+                        "exced" in str(err_text).lower()
+                        or "limite" in str(err_text).lower()
+                    )
+                ):
                     if attempt_idx < max_rate_attempts:
                         delay = rate_limit_delays[attempt_idx - 1]
-                        logging.warning(f"⏱️ Límite SMTP detectado. Esperando {delay}s antes de reintentar (intento {attempt_idx}/{max_rate_attempts})")
+                        logging.warning(
+                            f"⏱️ Límite SMTP detectado. Esperando {delay}s antes de reintentar (intento {attempt_idx}/{max_rate_attempts})"
+                        )
                         try:
                             server.quit()
                         except:
@@ -480,7 +730,9 @@ def enviar_email_en_hilo(email_id):
                         time.sleep(delay)
                         continue
                     else:
-                        logging.error(f"⚠️ Excedido reintentos por límite SMTP tras {max_rate_attempts} intentos")
+                        logging.error(
+                            f"⚠️ Excedido reintentos por límite SMTP tras {max_rate_attempts} intentos"
+                        )
                         # dejar que la excepción provoque la lógica de actualización de intentos más abajo
                         raise
                 else:
@@ -500,44 +752,48 @@ def enviar_email_en_hilo(email_id):
 
         # Actualizar estado - éxito (actualización atómica para evitar race conditions)
         EmailPendiente.update(
-            estado='enviado',
+            estado="enviado",
             enviado_en=datetime.datetime.now(),
             procesando_desde=None,
-            ultimo_error=None
-        ).where(
-            EmailPendiente.id == email_id
-        ).execute()
-        logging.info(f"✅ Correo enviado a {email_registro.destinatario} (ID: {email_id})")
+            ultimo_error=None,
+        ).where(EmailPendiente.id == email_id).execute()
+        logging.info(
+            f"✅ Correo enviado a {email_registro.destinatario} (ID: {email_id})"
+        )
 
     except Exception as e:
         error_msg = f"{e}\n{traceback.format_exc()}"
         logging.error(f"❌ Error al enviar correo ID {email_id}: {error_msg}")
-        
+
         if email_registro:
             try:
                 nuevos_intentos = email_registro.intentos + 1
-                nuevo_estado = 'fallido' if nuevos_intentos >= 3 else 'pendiente'
-                
+                nuevo_estado = "fallido" if nuevos_intentos >= 3 else "pendiente"
+
                 # UPDATE atómico para evitar race conditions
                 EmailPendiente.update(
                     intentos=nuevos_intentos,
                     ultimo_error=error_msg[:2000],
                     procesando_desde=None,  # CRÍTICO: liberar para reintento
-                    estado=nuevo_estado
-                ).where(
-                    EmailPendiente.id == email_id
-                ).execute()
-                
-                logging.info(f"🔄 Intento {nuevos_intentos}/3 para correo ID {email_id}, estado: {nuevo_estado}")
-                
+                    estado=nuevo_estado,
+                ).where(EmailPendiente.id == email_id).execute()
+
+                logging.info(
+                    f"🔄 Intento {nuevos_intentos}/3 para correo ID {email_id}, estado: {nuevo_estado}"
+                )
+
                 if nuevos_intentos >= 3:
                     # Notificar al administrador del fallo final
                     _notificar_fallo_final(email_registro, error_msg)
             except Exception as save_error:
-                logging.error(f"❌ Error al actualizar registro ID {email_id}: {save_error}")
+                logging.error(
+                    f"❌ Error al actualizar registro ID {email_id}: {save_error}"
+                )
                 # Intentar limpiar procesando_desde como último recurso
                 try:
-                    EmailPendiente.update(procesando_desde=None).where(EmailPendiente.id == email_id).execute()
+                    EmailPendiente.update(procesando_desde=None).where(
+                        EmailPendiente.id == email_id
+                    ).execute()
                 except:
                     pass
     finally:
@@ -545,12 +801,21 @@ def enviar_email_en_hilo(email_id):
         try:
             # Verificar si el email sigue en procesando sin estado final
             email_check = EmailPendiente.get_by_id(email_id)
-            if email_check.estado == 'pendiente' and email_check.procesando_desde is not None:
-                logging.warning(f"⚠️ Limpiando procesando_desde huérfano para email ID {email_id}")
-                EmailPendiente.update(procesando_desde=None).where(EmailPendiente.id == email_id).execute()
+            if (
+                email_check.estado == "pendiente"
+                and email_check.procesando_desde is not None
+            ):
+                logging.warning(
+                    f"⚠️ Limpiando procesando_desde huérfano para email ID {email_id}"
+                )
+                EmailPendiente.update(procesando_desde=None).where(
+                    EmailPendiente.id == email_id
+                ).execute()
         except Exception as cleanup_error:
-            logging.error(f"Error en limpieza final de email ID {email_id}: {cleanup_error}")
-        
+            logging.error(
+                f"Error en limpieza final de email ID {email_id}: {cleanup_error}"
+            )
+
         # Cerrar conexión del hilo
         if db and not db.is_closed():
             db.close()

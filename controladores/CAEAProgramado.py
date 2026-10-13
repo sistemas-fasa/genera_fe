@@ -3,7 +3,7 @@ import calendar
 import html
 import logging
 import os
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from dotenv import load_dotenv
 
@@ -33,16 +33,66 @@ def calcular_periodo_orden_actual(fecha=None):
     return periodo, orden
 
 
-def corresponde_solicitar_caea(fecha=None):
+def _quincena_siguiente(periodo, orden):
+    anio = int(periodo[:4])
+    mes = int(periodo[4:6])
+    if orden == "1":
+        return "{:04d}{:02d}".format(anio, mes), "2"
+    if mes == 12:
+        return "{:04d}{:02d}".format(anio + 1, 1), "1"
+    return "{:04d}{:02d}".format(anio, mes + 1), "1"
+
+
+def _ventana_solicitud(periodo, orden):
+    """(desde, hasta) en que ARCA admite pedir el CAEA de esa quincena.
+
+    Se puede pedir desde los cinco dias corridos inmediatamente anteriores al
+    inicio de la quincena y hasta el final de la misma.
     """
-    Devuelve True si corresponde intentar solicitud automatica:
-    - dias 10 al 15 inclusive para orden 1;
-    - ultimos 5 dias del mes hasta fin de mes inclusive para orden 2.
+    anio = int(periodo[:4])
+    mes = int(periodo[4:6])
+    if orden == "1":
+        inicio = date(anio, mes, 1)
+        fin = date(anio, mes, 15)
+    else:
+        ultimo = calendar.monthrange(anio, mes)[1]
+        inicio = date(anio, mes, 16)
+        fin = date(anio, mes, ultimo)
+    return inicio - timedelta(days=5), fin
+
+
+def periodos_ordenes_a_solicitar(fecha=None):
+    """
+    Quincenas cuyo CAEA se puede pedir hoy, en orden de prioridad.
+
+    Devuelve lista de tuplas (periodo, orden) con periodo YYYYMM. Vacia si hoy
+    no hay ventana de solicitud.
+
+    Ojo con la franja de solapamiento: durante los 5 dias previos al inicio de
+    una quincena siguen abiertas dos ventanas, la de la quincena en curso y la
+    de la que viene. Por eso es una lista y no un solo par: si el CAEA de la
+    actual ya existe, hay que poder pedir el de la siguiente.
     """
     fecha = _fecha_base(fecha)
-    ultimo_dia = calendar.monthrange(fecha.year, fecha.month)[1]
-    inicio_segunda_ventana = ultimo_dia - 5
-    return 10 <= fecha.day <= 15 or inicio_segunda_ventana <= fecha.day <= ultimo_dia
+    periodo, orden = calcular_periodo_orden_actual(fecha)
+
+    salida = []
+    for candidato in ((periodo, orden), _quincena_siguiente(periodo, orden)):
+        desde, hasta = _ventana_solicitud(*candidato)
+        if desde <= fecha <= hasta:
+            salida.append(candidato)
+    return salida
+
+
+def corresponde_solicitar_caea(fecha=None):
+    """
+    Devuelve True si hoy hay ventana de solicitud segun ARCA (RG 4291 /
+    RG 5782-2025).
+
+    Antes solo miraba los dias 10 a 15 y los ultimos cinco del mes. Con esa
+    ventana, si AFIP se caia el dia 10 la quincena entera quedaba sin CAEA.
+    """
+    return bool(periodos_ordenes_a_solicitar(fecha))
 
 
 def _caea_model_default():
@@ -224,39 +274,43 @@ def solicitar_caea_si_corresponde(
     Si ya existe CAEA para periodo/orden/empresa, no llama a AFIP.
     Si falta, llama una sola vez a AFIP, guarda un solo registro y envia email.
     """
-    if not corresponde_solicitar_caea(fecha):
+    candidatos = periodos_ordenes_a_solicitar(fecha)
+    if not candidatos:
         return None
 
     caea_model = caea_model or _caea_model_default()
     fe_factory = fe_factory or _fe_factory_default()
     notificador = notificador or enviar_notificacion_caea_obtenido
-    periodo, orden = calcular_periodo_orden_actual(fecha)
-    if caea_ya_existe(periodo, orden, empresa_id, caea_model=caea_model):
-        return None
 
-    wsfe = fe_factory()
-    wsfe.SolicitarCAEA(periodo, orden)
-    if not getattr(wsfe, "CAEA", ""):
-        raise RuntimeError("AFIP no devolvio CAEA para periodo/orden")
+    for periodo, orden in candidatos:
+        if caea_ya_existe(periodo, orden, empresa_id, caea_model=caea_model):
+            continue
 
-    registrado_en = datetime.now()
-    caea_registro = caea_model.create(
-        CAEA=wsfe.CAEA,
-        periodo=getattr(wsfe, "Periodo", None) or periodo,
-        orden=getattr(wsfe, "Orden", None) or orden,
-        fchvigdesde=getattr(wsfe, "FchVigDesde", None),
-        fchvighasta=getattr(wsfe, "FchVigHasta", None),
-        fchtopeinf=getattr(wsfe, "FchTopeInf", None),
-        fchproceso=getattr(wsfe, "FchProceso", None),
-        obs=getattr(wsfe, "Obs", "") or "",
-        empresa=empresa_id,
-        ptovta=ptovta_resolver(empresa_id) or "",
-    )
-    caea_registro.registrado_en = registrado_en
+        wsfe = fe_factory()
+        wsfe.SolicitarCAEA(periodo, orden)
+        if not getattr(wsfe, "CAEA", ""):
+            raise RuntimeError("AFIP no devolvio CAEA para periodo/orden")
 
-    try:
-        notificador(caea_registro)
-    except Exception:
-        logging.exception("No se pudo encolar notificacion de CAEA obtenido")
+        registrado_en = datetime.now()
+        caea_registro = caea_model.create(
+            CAEA=wsfe.CAEA,
+            periodo=getattr(wsfe, "Periodo", None) or periodo,
+            orden=getattr(wsfe, "Orden", None) or orden,
+            fchvigdesde=getattr(wsfe, "FchVigDesde", None),
+            fchvighasta=getattr(wsfe, "FchVigHasta", None),
+            fchtopeinf=getattr(wsfe, "FchTopeInf", None),
+            fchproceso=getattr(wsfe, "FchProceso", None),
+            obs=getattr(wsfe, "Obs", "") or "",
+            empresa=empresa_id,
+            ptovta=ptovta_resolver(empresa_id) or "",
+        )
+        caea_registro.registrado_en = registrado_en
 
-    return caea_registro
+        try:
+            notificador(caea_registro)
+        except Exception:
+            logging.exception("No se pudo encolar notificacion de CAEA obtenido")
+
+        return caea_registro
+
+    return None
