@@ -18,7 +18,7 @@ from pyafipws.ws_sr_padron import WSSrPadronA5
 __author__ = "Jose Oscar Vogel <oscarvogel@gmail.com>"
 __copyright__ = "Copyright (C) 2018 Jose Oscar Vogel"
 __license__ = "GPL 3.0"
-__version__ = "0.1"
+__version__ = "0.2"
 
 
 class PadronAfip(WSSrPadronA5):
