@@ -15,6 +15,10 @@ wsfe-*-ta.xml
 *.p12
 *.pfx
 
+# XML del ultimo comprobante (grabaxml), para depurar contra AFIP
+xmlrequest.xml
+xmlresponse.xml
+
 # Runtime output and generated business documents
 *.log
 errors.log

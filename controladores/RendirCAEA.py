@@ -190,7 +190,12 @@ def rendir_ptovta(
             # Este ptovta ya informo comprobantes con este CAEA y ahora no
             # queda ninguno pendiente. Declarar "sin movimiento" aca seria
             # falso, y ARCA lo rechaza.
-            fila.estado = ESTADO_TERMINADO
+            # Un ptovta con rechazos NO queda terminado: si se lo marcaba
+            # asi, la corrida siguiente lo contaba entre los omitidos y el
+            # error quedaba invisible.
+            fila.estado = (
+                ESTADO_CON_ERRORES if fila.comprobantes_error else ESTADO_TERMINADO
+            )
             fila.fecha_fin = datetime.now()
             fila.save()
             return {
@@ -270,7 +275,9 @@ def rendir_ptovta(
                         getattr(controlador, "xml_response", "") or "",
                     )
                 )
-                errores += 1
+                # El ultimo_error se arma antes de sumar el error: si armar el
+                # texto revienta, lo cuenta el except de abajo y el mismo
+                # comprobante no suma dos veces (ok_count llegaba a -1).
                 ultimo_error = (
                     "{pv} {nro}: {err}\nXML_REQUEST:\n{req}\n\nXML_RESPONSE:\n{res}".format(
                         pv=encabezado.puntovta,
@@ -282,6 +289,7 @@ def rendir_ptovta(
                         res=DeCodifica(getattr(controlador, "xml_response", "") or ""),
                     )
                 )
+                errores += 1
             encabezado.save()
         except Exception as exc:
             # Un comprobante que falla no puede abortar el resto del ptovta.
@@ -300,6 +308,46 @@ def rendir_ptovta(
         "error_count": errores,
         "sin_movimiento": False,
     }
+
+
+def contar_pendientes(
+    periodo,
+    orden,
+    empresa_id=1,
+    ptovta=None,
+    caea_model=None,
+    ptovta_model=None,
+    encabezado_model=None,
+):
+    """Cuantos comprobantes siguen sin resultado para ese CAEA, ptovta por ptovta.
+
+    Es la cola real que rendir() va a tomar, no la bitacora de lo ya
+    procesado. En una quincena nueva la bitacora arranca vacia y no dice
+    nada, asi que un dry-run que solo mire la bitacora informa "nada
+    pendiente" con la cola llena.
+    """
+    caea_model = caea_model or _caea_model()
+    encabezado_model = encabezado_model or _encabezado_model()
+    registro_caea = obtener_caea(periodo, orden, empresa_id, caea_model=caea_model)
+    if registro_caea is None:
+        return []
+
+    caea = registro_caea.CAEA
+    if ptovta:
+        puntos = [normalizar_ptovta(ptovta)]
+    else:
+        puntos = listar_ptovta_caea(empresa_id, ptovta_model=ptovta_model)
+
+    salida = []
+    for punto in puntos:
+        consulta = encabezado_model.select().where(
+            encabezado_model.puntovta == punto,
+            encabezado_model.tipows == "A",
+            encabezado_model.cae == caea,
+            encabezado_model.resultado == "",
+        )
+        salida.append({"ptovta": punto, "pendientes": consulta.count()})
+    return salida
 
 
 def resumir(periodo, orden, empresa_id=1, solo_pendientes=True, rendicion_model=None):

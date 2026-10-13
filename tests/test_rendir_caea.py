@@ -4,6 +4,7 @@ from datetime import date
 from controladores.RendirCAEA import (
     ESTADO_CON_ERRORES,
     ESTADO_TERMINADO,
+    contar_pendientes,
     listar_ptovta_caea,
     obtener_caea,
     rendir,
@@ -427,6 +428,86 @@ def test_rindir_con_todos_no_declara_sin_movimiento_lo_ya_informado():
     assert segunda["detalle"][0]["sin_movimiento"] is False
     assert fe.informados == []
     assert len(controlador.llamadas) == 1
+
+
+def test_un_error_no_se_cuenta_dos_veces():
+    """Si armar el ultimo_error revienta, el except lo cuenta una sola vez.
+
+    Contarlo dos veces dejaba ok_count en -1 para un comprobante y la
+    bitacora decía 2 errores con 1 solo comprobante rechazado.
+    """
+    piezas = _base(
+        encabezados=[EncabezadoFake("0022", "00000001", CAEA)],
+        errores=("00000001",),
+    )
+    # Rompe la armado del ultimo_error, como pasaba con DeCodifica(bytes).
+    piezas["kwargs"]["encabezado_model"].filas[0].errmsg = "x" * 10
+    original = piezas["spies"]["controlador"].CreaFE
+
+    class Roto:
+        def __init__(self, real):
+            self._real = real
+
+        def __getattr__(self, nombre):
+            return getattr(self._real, nombre)
+
+        @property
+        def xml_response(self):
+            raise TypeError("encoding without a string argument")
+
+    piezas["kwargs"]["controlador_factory"] = lambda: Roto(original)
+
+    resumen = rendir_ptovta("202606", "1", "0022", **piezas["kwargs"])
+
+    assert resumen["error_count"] == 1
+    assert resumen["ok_count"] == 0
+    assert resumen["ok"] is False
+
+    fila = piezas["kwargs"]["rendicion_model"].obtener(
+        1, "202606", "1", "0022", crear=False
+    )
+    assert fila.comprobantes_total == 1
+    assert fila.comprobantes_ok == 0
+    assert fila.comprobantes_error == 1
+
+
+def test_contar_pendientes_muestra_la_cola_real_no_la_bitacora():
+    """En una quincena nueva la bitacora arranca vacia. Un dry-run que solo
+    mire la bitacora informaria "nada pendiente" con la cola llena."""
+    informad = EncabezadoFake("0022", "00000001", CAEA)
+    informad.resultado = "A"
+    piezas = _rindir(
+        encabezados=[
+            EncabezadoFake("0022", "00000001", CAEA),
+            EncabezadoFake("0022", "00000002", CAEA),
+            informad,
+            EncabezadoFake("0021", "00000009", CAEA),
+        ],
+        ptovtas=[PtoVtaFake("0021"), PtoVtaFake("0022")],
+    )
+
+    conteo = contar_pendientes(
+        "202606", "1", empresa_id=1, **{
+            k: v for k, v in piezas["kwargs"].items()
+            if k in ("caea_model", "ptovta_model", "encabezado_model")
+        }
+    )
+
+    por_ptovta = {f["ptovta"]: f["pendientes"] for f in conteo}
+    # El ya informado no cuenta: es justo el corte por resultado.
+    assert por_ptovta["0022"] == 2
+    assert por_ptovta["0021"] == 1
+
+
+def test_contar_pendientes_sin_caea_no_devuelve_nada():
+    piezas = _base()
+    piezas["kwargs"]["caea_model"] = CAEAModelFake(registros=[])
+
+    assert contar_pendientes(
+        "202606", "1", empresa_id=1,
+        caea_model=piezas["kwargs"]["caea_model"],
+        encabezado_model=piezas["kwargs"]["encabezado_model"],
+    ) == []
 
 
 def test_se_avisa_con_un_resumen_del_rendido():

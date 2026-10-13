@@ -231,6 +231,16 @@ def Normaliza(valor):
     return valor.replace('Ñ','N').replace('ñ','n').replace('º','')
 
 def DeCodifica(dato):
+    """Decodifica texto que puede venir como str o como bytes.
+
+    bytearray(dato, 'latin-1') exige str: si le pasan bytes (los XML de
+    pyafipws, por ejemplo) levanta TypeError. Los bytes se decodifican
+    directo.
+    """
+    if dato is None:
+        return ""
+    if isinstance(dato, (bytes, bytearray)):
+        return "{}".format(bytes(dato).decode('utf-8', 'ignore'))
     return "{}".format(bytearray(dato, 'latin-1', errors='ignore').decode('utf-8','ignore'))
 
 

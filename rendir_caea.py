@@ -20,6 +20,7 @@ if str(ROOT) not in sys.path:
 from controladores.CAEAProgramado import calcular_periodo_orden_actual  # noqa: E402
 from controladores.RendirCAEA import (  # noqa: E402
     ESTADO_TERMINADO,
+    contar_pendientes,
     listar_ptovta_caea,
     obtener_caea,
     rendir,
@@ -149,6 +150,43 @@ def _imprimir_estado(periodo, orden, empresa):
         ))
 
 
+_qapp = None
+
+
+def _controlador_factory():
+    """MainController, que construye su MainView al instanciarse.
+
+    Qt aborta el proceso si se crea un QWidget sin QApplication, asi que sin
+    esto el CLI moria con SIGABRT apenasbiologyaba el primer comprobante
+    pendiente. No se corre el event loop: los timers del controlador quedan
+    inertes y el CLI no dispara el ciclo de procesamiento.
+    """
+    global _qapp
+    from PyQt5.QtWidgets import QApplication
+
+    if _qapp is None:
+        _qapp = QApplication([])
+    from controladores.Main import MainController
+
+    return MainController()
+
+
+def _imprimir_cola(periodo, orden, empresa):
+    """La cola real que se va a informar, no la bitacora.
+
+    La bitacora arranca vacia en cada quincena, asi que un dry-run de una
+    quincena nueva no mostraba nada aunque tuviera cientos de pendientes.
+    """
+    filas = contar_pendientes(periodo, orden, empresa_id=empresa)
+    if not filas:
+        print("  (no hay CAEA para {} orden {})".format(periodo, orden))
+        return
+    total = sum(f["pendientes"] for f in filas)
+    for f in filas:
+        print("  {}: {} pendiente(s)".format(f["ptovta"], f["pendientes"]))
+    print("  Total a informar: {}".format(total))
+
+
 def main(argv=None):
     args = _parser().parse_args(argv)
     try:
@@ -194,8 +232,15 @@ def _correr(args):
     if args.dry_run:
         print()
         print("Dry-run. No se llamo a AFIP, no se escribio en base y no se envio email.")
-        print("Pendientes a informar:")
-        for fila in resumir(periodo, orden, args.empresa, solo_pendientes=True):
+        print()
+        print("Comprobantes pendientes de informar:")
+        _imprimir_cola(periodo, orden, args.empresa)
+        print()
+        print("Bitacora de rendidos anteriores:")
+        filas = resumir(periodo, orden, args.empresa, solo_pendientes=False)
+        if not filas:
+            print("  (vacia: esta quincena todavia no se rindio)")
+        for fila in filas:
             print(
                 "  {} estado={} ok={} err={}".format(
                     fila.ptovta,
@@ -213,6 +258,7 @@ def _correr(args):
         ptovta=args.ptovta,
         solo_pendientes=not args.todos,
         avisar=not args.sin_aviso,
+        controlador_factory=_controlador_factory,
     )
 
     print()
