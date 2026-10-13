@@ -214,6 +214,21 @@ def _item_grilla_comprobante(
     ]
 
 
+def _escribir_xml(ruta, contenido):
+    """Graba un XML de pyafipws tolerando str o bytes.
+
+    No son del mismo tipo: con el CAEA, xml_request llega str y xml_response
+    bytes. Abrir los dos en "wb" hacia TypeError al escribir el request y
+    abortaba el comprobante entero antes de registrar el resultado.
+    """
+    if isinstance(contenido, bytes):
+        with open(ruta, "wb") as f:
+            f.write(contenido)
+    else:
+        with open(ruta, "w", encoding="utf-8") as f:
+            f.write(contenido or "")
+
+
 class MainController(ControladorBase):
     lProcesa = True
     cae = ""
@@ -889,16 +904,22 @@ class MainController(ControladorBase):
 
         if caea:
             wsfev1.EstablecerCampoFactura("caea", d.cae)
+            # ARCA exige la fecha/hora en que se genero el comprobante para los
+            # ptovta de contingencia CAEA; sin esto rechaza con el codigo 1440.
+            #
+            # OJO: la app no guarda esa hora en ningun lado. Solo tiene
+            # fechacbte (date) y vencecae (date). Se arma con el momento
+            #del rindado, asi que NO ordena cronologicamente los comprobantes
+            #de una misma tanda. Para ordenar bien haria falta que la
+            #impresora fiscal lo capture al emitir.
+            wsfev1.EstablecerCampoFactura(
+                "fecha_hs_gen", datetime.now().strftime("%Y%m%d%H%M%S")
+            )
             cae = wsfev1.CAEARegInformativo()
             # logging.warning(wsfev1.xml_request, wsfev1.xml_response)
             if self.grabaxml:
-                f = open("xmlrequest.xml", "wb")
-                f.write(wsfev1.xml_request)
-                f.close()
-
-                f = open("xmlresponse.xml", "wb")
-                f.write(wsfev1.xml_response)
-                f.close()
+                _escribir_xml("xmlrequest.xml", wsfev1.xml_request)
+                _escribir_xml("xmlresponse.xml", wsfev1.xml_response)
                 respuesta = Respuesta()
                 respuesta.nrelacion = d.nrelacion
                 respuesta.xmlrequest = wsfev1.xml_request
@@ -1126,11 +1147,13 @@ class MainController(ControladorBase):
             i += 1
 
             try:
-                # CreaFE recibe el CAEA en d.cae y devuelve el CAE real que
-                # asigna AFIP. Antes se escribia a mano resultado='A' con el
-                # numero de CAEA en el campo cae, sin informar nada: el
-                # comprobante quedaba "autorizado" localmente, ARCA nunca lo
-                # veia y, como resultado != '', el ciclo no lo tomaba mas.
+                # CreaFE recibe el CAEA en d.cae y lo devuelve validado por
+                # AFIP: en el regimen CAEA no hay un CAE por comprobante, el
+                # codigo de autorizacion es el propio CAEA y lo que AFIP
+                # devuelve es el resultado de validarlo. Antes se escribia a
+                # mano resultado='A' sin informar nada, asi que el comprobante
+                # quedaba "autorizado" localmente y, como resultado != '', el
+                # ciclo no lo tomaba mas.
                 d.cae = datacaea.CAEA
                 ok = self.CreaFE(d, caea=True)
                 respuesta_afip = (getattr(self, "xml_response", "") or "").strip()
@@ -1159,7 +1182,8 @@ class MainController(ControladorBase):
                     continue
                 else:
                     # AFIP contesto y rechazo: aca si corresponde marcar error.
-                    d.cae = ""
+                    # El CAEA sigue puesto: era valido, lo que no valido fue el
+                    # comprobante.
                     d.resultado = self.resultado or "E"
                     d.errmsg = self.errmsg
                     d.motivoobs = self.motivoobs

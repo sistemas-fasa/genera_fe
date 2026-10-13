@@ -1,14 +1,8 @@
-import os
-from datetime import datetime
-
 from PyQt5.QtWidgets import QApplication
 
 from controladores.ControladorBase import ControladorBase
-from controladores.FE import FEv1
-from controladores.Main import MainController, _email_alerta_fe_from, _email_alerta_fe_to, enviar_correo_alerta_operativa
-from libs.Utiles import DeCodifica
-from modelos.CAEA import CAEA
-from modelos.Encabezado import Encabezado
+from controladores.Main import MainController
+from controladores.RendirCAEA import rendir
 from modelos.ModeloBase import ModeloBase
 from vistas.InformaCAEA import InfromaCAEAView
 
@@ -40,53 +34,33 @@ class InformaCAEAController(ControladorBase):
         QApplication.exit(1)
 
     def Informa(self):
-        caea = CAEA.select().where(CAEA.periodo == self.view.layoutParametros.cPeriodo,
-                                   CAEA.orden == str(self.view.txtOrden.text()),
-                                   CAEA.estado == '')
+        """Delega en el servicio de rendido.
+
+        Antes esta pantalla reimplementaba el recorrido:tomaba un solo ptovta,
+        instanciaba un MainController por cada CAEA encontrado (cada uno abre
+        su propia MainView) y dejaba el CAEA sin marcar como procesado si
+        un comprobante fallaba, porque el for de CAEA estaba por fuera del de
+        los comprobantes.
+        """
+        periodo = self.view.layoutParametros.cPeriodo
+        orden = str(self.view.txtOrden.text()).strip()
         ptovta = str(self.view.txtPtoVta.text()).zfill(4)
 
-        for c in caea:
-            encabeza = Encabezado.select().where(Encabezado.puntovta == ptovta,
-                                                 Encabezado.tipows == 'A',
-                                                 Encabezado.cae == c.CAEA)
-            if encabeza.count() == 0:
-                wsfe = FEv1()
-                wsfe.InformarCAEASinMovimiento(ptovta, c.CAEA)
-            else:
-                controlador = MainController()
-                controlador.grabaxml = True
-                for d in encabeza:
-                    print("Procesando factura {}-{}".format(d.puntovta, d.cbtenro))
-                    ok = controlador.CreaFE(d, caea=True)
-                    if ok:
-                        d.cae = controlador.cae
-                        d.resultado = controlador.resultado
-                        d.cbtenro = str(controlador.comprobante).zfill(8)
-                        d.vencecae = datetime.strptime(controlador.vencecae, '%Y%m%d')
-                    else:
-                        d.resultado = controlador.resultado
-                        d.errmsg = controlador.errmsg
-                        d.motivoobs = controlador.motivoobs
-                        d.vencecae = datetime.today()
-                        enviar_correo_alerta_operativa(
-                            to_address=_email_alerta_fe_to(),
-                            from_address=_email_alerta_fe_from(),
-                            subject='Error al generar FE',
-                            message=(
-                                "Error: {}\n"
-                                "Motivo/Obs: {}\n\n"
-                                "XML request:\n{}\n\n"
-                                "XML response:\n{}"
-                            ).format(
-                                DeCodifica(controlador.errmsg or ""),
-                                DeCodifica(controlador.motivoobs or ""),
-                                DeCodifica(controlador.xml_request or ""),
-                                DeCodifica(controlador.xml_response or "")
-                            ),
-                            password_email=os.getenv('FASA_ERROR_EMAIL_PASSWORD') or os.getenv('SMTP_PASSWORD', '')
-                        )
-                    d.save()
-            caeaupdate = CAEA.get_by_id(c.idCAEA)
-            caeaupdate.estado = 'P'
-            caeaupdate.save()
+        # MainController construye su MainView al instanciarse: uno solo y
+        # reutilizado para toda la corrida.
+        controlador = MainController()
+        controlador.grabaxml = True
+
+        try:
+            resumen = rendir(
+                periodo,
+                orden,
+                empresa_id=1,
+                ptovta=ptovta,
+                controlador=controlador,
+            )
+            print(resumen["mensaje"])
+        except Exception as exc:
+            print("Error al rendir el CAEA: {}".format(exc))
+
         self.Cerrar()
