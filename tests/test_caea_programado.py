@@ -95,6 +95,9 @@ class FEv1Fake:
         self.calls.append((periodo, orden))
         if self.falla:
             raise RuntimeError("AFIP caido")
+        # ARCA devuelve el periodo y orden pedidos.
+        self.Periodo = periodo
+        self.Orden = orden
         return self.CAEA
 
 
@@ -156,6 +159,47 @@ def test_si_todas_las_quincenas_candidatas_tienen_caea_no_llama_afip():
     assert fe.calls == []
     assert emails == []
     assert modelo.creados == []
+
+
+def test_no_se_pide_mas_de_un_caea_por_quincena():
+    """ARCA: un unico CAEA por contribuyente y quincena.
+
+    En la ventana de ARCA hay hasta dos quincenas candidatas a la vez, asi que
+    esta es la garantia que hay que sostener: por mas que se llame todos los
+    dias, cada (periodo, orden) se pide una sola vez.
+    """
+    from controladores.CAEAProgramado import solicitar_caea_si_corresponde
+
+    modelo = CAEAModelDinamicoFake()
+    fe = FEv1Fake()
+    emails = []
+
+    for dia in range(1, 31):
+        solicitar_caea_si_corresponde(
+            empresa_id=1,
+            fecha=date(2026, 6, dia),
+            caea_model=modelo,
+            fe_factory=lambda: fe,
+            notificador=emails.append,
+        )
+
+    # El 1 abre la de junio 1ra, el 11 la de junio 2da, el 26 la de julio 1ra.
+    assert fe.calls == [("202606", "1"), ("202606", "2"), ("202607", "1")]
+
+    pedidas = set()
+    for periodo, orden in fe.calls:
+        clave = (periodo, orden)
+        assert clave not in pedidas, "CAEA pedido dos veces para {}".format(clave)
+        pedidas.add(clave)
+
+    por_quincena = {}
+    for registro in modelo.creados:
+        clave = (registro["periodo"], registro["orden"])
+        assert clave not in por_quincena, "CAEA duplicado para {}".format(clave)
+        por_quincena[clave] = registro
+
+    assert set(por_quincena) == pedidas
+    assert len(emails) == len(pedidas)
 
 
 def test_en_el_solapamiento_pide_la_quincena_siguiente_si_la_actual_ya_existe():
