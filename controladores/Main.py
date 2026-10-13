@@ -1126,11 +1126,13 @@ class MainController(ControladorBase):
             i += 1
 
             try:
-                # CreaFE recibe el CAEA en d.cae y devuelve el CAE real que
-                # asigna AFIP. Antes se escribia a mano resultado='A' con el
-                # numero de CAEA en el campo cae, sin informar nada: el
-                # comprobante quedaba "autorizado" localmente, ARCA nunca lo
-                # veia y, como resultado != '', el ciclo no lo tomaba mas.
+                # CreaFE recibe el CAEA en d.cae y lo devuelve validado por
+                # AFIP: en el regimen CAEA no hay un CAE por comprobante, el
+                # codigo de autorizacion es el propio CAEA y lo que AFIP
+                # devuelve es el resultado de validarlo. Antes se escribia a
+                # mano resultado='A' sin informar nada, asi que el comprobante
+                # quedaba "autorizado" localmente y, como resultado != '', el
+                # ciclo no lo tomaba mas.
                 d.cae = datacaea.CAEA
                 ok = self.CreaFE(d, caea=True)
                 respuesta_afip = (getattr(self, "xml_response", "") or "").strip()
@@ -1159,7 +1161,8 @@ class MainController(ControladorBase):
                     continue
                 else:
                     # AFIP contesto y rechazo: aca si corresponde marcar error.
-                    d.cae = ""
+                    # El CAEA sigue puesto: era valido, lo que no valido fue el
+                    # comprobante.
                     d.resultado = self.resultado or "E"
                     d.errmsg = self.errmsg
                     d.motivoobs = self.motivoobs

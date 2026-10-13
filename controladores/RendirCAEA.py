@@ -171,10 +171,15 @@ def rendir_ptovta(
     fila.fecha_inicio = ahora
     fila.save()
 
+    # Solo los que siguen sin resultado. El comprobante conserva el CAEA en el
+    # campo cae (en el regimen CAEA no hay un CAE por comprobante), asi que sin
+    # este filtro la consulta matchearia tambien los ya informados y los volveria
+    # a mandar a ARCA.
     encabezados = encabezado_model.select().where(
         encabezado_model.puntovta == ptovta,
         encabezado_model.tipows == "A",
         encabezado_model.cae == caea,
+        encabezado_model.resultado == "",
     )
     total = encabezados.count()
     errores = 0
@@ -182,9 +187,8 @@ def rendir_ptovta(
 
     if total == 0:
         if fila.comprobantes_ok or fila.comprobantes_error:
-            # Este ptovta ya informo comprobantes con este CAEA. Ahora la
-            # consulta viene vacia porque los comprobantes guardaron el CAE real
-            # en vez del numero de CAEA. Declarar "sin movimiento" aca seria
+            # Este ptovta ya informo comprobantes con este CAEA y ahora no
+            # queda ninguno pendiente. Declarar "sin movimiento" aca seria
             # falso, y ARCA lo rechaza.
             fila.estado = ESTADO_TERMINADO
             fila.fecha_fin = datetime.now()
@@ -240,18 +244,26 @@ def rendir_ptovta(
                 controlador = (controlador_factory or _controlador_factory)()
             ok = controlador.CreaFE(encabezado, caea=True)
             if ok:
+                # En el regimen CAEA ARCA no devuelve un CAE propio: devuelve el
+                # CAEA validado. Lo que marca el resultado del comprobante es el
+                # Resultado que respondio AFIP.
                 encabezado.cae = controlador.cae
                 encabezado.resultado = controlador.resultado
                 encabezado.cbtenro = str(controlador.comprobante).zfill(8)
-                encabezado.vencecae = datetime.strptime(
-                    controlador.vencecae, "%Y%m%d"
+                # AFIP no define vencimiento para CAEA: se usa la fecha tope de
+                # informe del propio CAEA.
+                encabezado.vencecae = (
+                    datetime.strptime(controlador.vencecae, "%Y%m%d")
+                    if controlador.vencecae
+                    else registro_caea.fchtopeinf
                 )
             else:
                 encabezado.resultado = controlador.resultado or "E"
                 encabezado.errmsg = controlador.errmsg
                 encabezado.motivoobs = controlador.motivoobs
                 encabezado.vencecae = datetime.today()
-                encabezado.cae = ""
+                # El CAEA se deja puesto: era valido, lo que no valido fue el
+                # comprobante.
                 encabezado.errorprog = (
                     "XML_REQUEST:\n{}\n\nXML_RESPONSE:\n{}".format(
                         getattr(controlador, "xml_request", "") or "",

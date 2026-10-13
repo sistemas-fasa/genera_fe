@@ -137,6 +137,7 @@ class EncabezadoModelFake:
     puntovta = CampoFake("puntovta")
     tipows = CampoFake("tipows")
     cae = CampoFake("cae")
+    resultado = CampoFake("resultado")
 
     def __init__(self, encabezados):
         self.filas = encabezados
@@ -176,9 +177,10 @@ class FEFake:
 
 
 class ControladorFake:
-    def __init__(self, errores=()):
+    def __init__(self, errores=(), vence_arca="20260620"):
         self.llamadas = []
         self.errores = set(errores)
+        self.vence_arca = vence_arca
         self.cae = ""
         self.comprobante = 0
         self.resultado = ""
@@ -193,14 +195,16 @@ class ControladorFake:
         if encabezado.cbtenro in self.errores:
             self.resultado = "E"
             self.errmsg = "Codigo 600"
-            self.motivoobs = "CAE ya informado"
+            self.motivoobs = "Comprobante rechazado"
             self.xml_request = "<req/>"
             self.xml_response = "<res/>"
             return False
-        self.cae = ("71" + encabezado.cbtenro.rjust(12, "0"))[:14]
+        # CAEARegInformativo devuelve el CAEA, no un CAE propio: lo que
+        # responde AFIP es el Resultado de validar el comprobante.
+        self.cae = encabezado.cae
         self.comprobante = int(encabezado.cbtenro)
         self.resultado = "A"
-        self.vencecae = "20260620"
+        self.vencecae = self.vence_arca
         return True
 
 
@@ -259,7 +263,7 @@ def test_ptovta_sin_comprobantes_se_declara_sin_movimiento():
     assert fila.estado == ESTADO_TERMINADO
 
 
-def test_comprobantes_se_informan_y_guardan_el_cae_real():
+def test_comprobantes_se_informan_y_quedan_marcados_con_el_resultado():
     piezas = _base(
         encabezados=[
             EncabezadoFake("0022", "00000001", CAEA),
@@ -276,20 +280,36 @@ def test_comprobantes_se_informan_y_guardan_el_cae_real():
 
     informado = piezas["spies"]["encabezados"][0]
     assert informado.resultado == "A"
-    assert informado.cae == "71000000000001"
     assert informado.guardados == 1
 
 
-def test_el_cae_guardado_no_es_el_numero_de_caea():
-    """El campo cae guardaba el numero de CAEA, indistinguible de un CAE."""
+def test_el_cae_conserva_el_caea_porque_arca_no_devuelve_uno_propio():
+    """En el regimen CAEA no hay un CAE por comprobante: el codigo de
+    autorizacion es el propio CAEA, y eso queda en el campo cae. Lo que ARCA
+    devuelve al validar el comprobante es el Resultado, y es lo que lo marca
+    como informado."""
     piezas = _base(encabezados=[EncabezadoFake("0022", "00000007", CAEA)])
 
     rendir_ptovta("202606", "1", "0022", **piezas["kwargs"])
 
     informado = piezas["spies"]["encabezados"][0]
-    assert informado.cae != CAEA
-    assert len(informado.cae) == 14
-    assert informado.cae.startswith("7")
+    assert informado.cae == CAEA
+    assert informado.resultado == "A"
+
+
+def test_un_comprobante_rechazado_conserva_el_caea():
+    """El CAEA era valido: lo que no valido ARCA fue el comprobante. Vaciar el
+    cae haria que el ptovta quedara con la cola de pendientes inconsistente."""
+    piezas = _base(
+        encabezados=[EncabezadoFake("0022", "00000007", CAEA)],
+        errores=("00000007",),
+    )
+
+    rendir_ptovta("202606", "1", "0022", **piezas["kwargs"])
+
+    fallido = piezas["spies"]["encabezados"][0]
+    assert fallido.resultado == "E"
+    assert fallido.cae == CAEA
 
 
 def test_un_comprobante_rechazado_no_aborta_el_resto_del_ptovta():
@@ -387,9 +407,12 @@ def test_rindir_es_idempotente_no_reprocesa_lo_terminado():
 
 
 def test_rindir_con_todos_no_declara_sin_movimiento_lo_ya_informado():
-    """Al reprocesar, los comprobantes ya tienen el CAE real y la consulta por
-    numero de CAEA viene vacia. No hay que declarar "sin movimiento" un punto
-    de venta que si emitio."""
+    """Regresion. El comprobante conserva el CAEA en el campo cae, asi que la
+    consulta de pendientes lo matcheaba tambien despues de informado y lo
+    mandaba a ARCA una segunda vez. El corte es por resultado.
+
+    Y si la cola queda vacia porque ya se informo todo, este punto de venta no
+    se puede declarar "sin movimiento": ARCA lo rechaza."""
     piezas = _rindir(encabezados=[EncabezadoFake("0022", "00000001", CAEA)])
     controlador = piezas["spies"]["controlador"]
     fe = piezas["kwargs"]["fe_factory"]()

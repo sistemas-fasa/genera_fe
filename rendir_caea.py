@@ -26,6 +26,8 @@ from controladores.RendirCAEA import (  # noqa: E402
     resumir,
 )
 
+COMANDO_MIGRACION = r"python .\migrations\ensure_caea_rendicion_schema.py"
+
 
 def _periodo_arg(valor):
     valor = str(valor).strip()
@@ -101,6 +103,33 @@ def _periodo_y_orden(args):
     return args.periodo or periodo, args.orden or orden
 
 
+def _tabla_faltante(exc):
+    """Devuelve el nombre de la tabla faltante, o None si el error es otro.
+
+    MySQL responde 1146 cuando la tabla todavia no existe. Sin esto el CLI
+    tiraba un traceback de peewee y no decia que faltaba correr la migracion.
+    """
+    texto = str(exc)
+    if "1146" not in texto and "doesn't exist" not in texto:
+        return None
+    for tabla in ("caea_rendicion", "caea"):
+        if tabla in texto:
+            return tabla
+    return "desconocida"
+
+
+def _avisar_tabla_faltante(tabla):
+    if tabla == "caea_rendicion":
+        print(
+            "Falta la tabla caea_rendicion en la base. Corre la migracion "
+            "una vez y volve a intentar:\n"
+            "    {}".format(COMANDO_MIGRACION),
+            file=sys.stderr,
+        )
+    else:
+        print("Falta la tabla {} en la base.".format(tabla), file=sys.stderr)
+
+
 def _imprimir_estado(periodo, orden, empresa):
     filas = resumir(periodo, orden, empresa_id=empresa, solo_pendientes=False)
     if not filas:
@@ -122,6 +151,17 @@ def _imprimir_estado(periodo, orden, empresa):
 
 def main(argv=None):
     args = _parser().parse_args(argv)
+    try:
+        return _correr(args)
+    except Exception as exc:  # noqa: BLE001 - se re-lanza si no es tabla faltante
+        tabla = _tabla_faltante(exc)
+        if tabla is None:
+            raise
+        _avisar_tabla_faltante(tabla)
+        return 3
+
+
+def _correr(args):
     periodo, orden = _periodo_y_orden(args)
 
     if args.estado:
