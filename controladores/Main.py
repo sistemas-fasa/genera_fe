@@ -1,5 +1,4 @@
 # coding=utf-8
-import calendar
 from concurrent.futures import ThreadPoolExecutor
 import os
 import tempfile
@@ -12,7 +11,6 @@ from check_project import collect_diagnostic_results
 from PyQt5.QtCore import QTimer
 from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import QApplication
-from peewee import fn
 
 from controladores.ConsultaPadronAfip import PadronAfip
 from controladores.ContingenciaCAEA import (
@@ -236,6 +234,9 @@ class MainController(ControladorBase):
     # El ciclo de procesamiento corre cada 500ms: sin este tope, la ausencia de
     # CAEA mandaria una alerta por ciclo.
     INTERVALO_ALERTA_CAEA_AUSENTE = timedelta(hours=1)
+    # Si AFIP no responde al informar por CAEA, se espera antes de reintentar.
+    # El ciclo corre cada 500ms y cada intento abre conexión con AFIP.
+    INTERVALO_REINTENTO_CAEA_SIN_RESPUESTA = timedelta(minutes=2)
 
     def __init__(self):
         super(MainController, self).__init__()
@@ -970,42 +971,6 @@ class MainController(ControladorBase):
         )
         return ok
 
-    def ObtieneCAEA(self):
-        dia = datetime.now().day
-        periodo = FechaMysql()[:6]
-        obtener = True
-        if dia < 15:
-            orden = "1"
-            if dia + 5 == 15:
-                obtener = True
-        else:
-            orden = "2"
-            if dia + 5 == calendar.monthrange(int(periodo[:4]), int(periodo[4:6]))[1]:
-                obtener = True
-
-        if obtener:
-            try:
-                data = (
-                    CAEA.select()
-                    .where(CAEA.periodo == periodo, CAEA.orden == orden)
-                    .get()
-                )
-            except CAEA.DoesNotExist:
-                print("caea no existe")
-                wsfe = FEv1()
-                wsfe.SolicitarCAEA(periodo, orden)
-                caea = CAEA()
-                caea.CAEA = wsfe.CAEA
-                caea.periodo = wsfe.Periodo
-                caea.orden = wsfe.Orden
-                caea.fchvigdesde = wsfe.FchVigDesde
-                caea.fchvighasta = wsfe.FchVigHasta
-                caea.fchproceso = wsfe.FchProceso
-                caea.fchtopeinf = wsfe.FchTopeInf
-                caea.obs = wsfe.Obs
-                caea.empresa = 1  # ferreteria por ahora tengo que ver como hacer para las otras empresas
-                caea.save()
-
     def GeneraCAE(self):
         data = Encabezado.select().where(
             Encabezado.resultado == "",
@@ -1112,6 +1077,14 @@ class MainController(ControladorBase):
         if not data.exists():
             return
 
+        reintento_en = getattr(self, "_caea_reintento_en", None)
+        if reintento_en is not None and datetime.now() < reintento_en:
+            logging.debug(
+                "GeneraCAEA en espera por falta de respuesta de AFIP: reintento a las %s",
+                reintento_en,
+            )
+            return
+
         total = data.count()
         i = 1.0
         dia = datetime.now().day
@@ -1150,20 +1123,76 @@ class MainController(ControladorBase):
                 "Procesando comprobante {} de {}".format(i, total)
             )
             self.view.avance.actualizar(i / total * 100)
+            i += 1
 
             try:
-                encabeza = (
-                    Encabezado.select(fn.MAX(Encabezado.cbtenro))
-                    .where(
-                        Encabezado.puntovta == d.puntovta,
-                        Encabezado.tipocbte == d.tipocbte,
-                    )
-                    .scalar()
-                )
-                d.cbtenro = str(int(encabeza if encabeza else "0") + 1).zfill(8)
+                # CreaFE recibe el CAEA en d.cae y devuelve el CAE real que
+                # asigna AFIP. Antes se escribia a mano resultado='A' con el
+                # numero de CAEA en el campo cae, sin informar nada: el
+                # comprobante quedaba "autorizado" localmente, ARCA nunca lo
+                # veia y, como resultado != '', el ciclo no lo tomaba mas.
                 d.cae = datacaea.CAEA
-                d.vencecae = datacaea.fchtopeinf
-                d.resultado = "A"
+                ok = self.CreaFE(d, caea=True)
+                respuesta_afip = (getattr(self, "xml_response", "") or "").strip()
+
+                if ok:
+                    self._caea_reintento_en = None
+                    d.cae = self.cae
+                    d.resultado = self.resultado
+                    d.cbtenro = str(self.comprobante).zfill(8)
+                    d.vencecae = (
+                        datetime.strptime(self.vencecae, "%Y%m%d")
+                        if self.vencecae
+                        else datacaea.fchtopeinf
+                    )
+                elif not respuesta_afip:
+                    # AFIP no respondio: no es un rechazo del comprobante, es
+                    # el servicio caido. Se deja pendiente y se espera antes de
+                    # volver a intentar, para no reintentar cada 500ms.
+                    self._caea_reintento_en = (
+                        datetime.now() + self.INTERVALO_REINTENTO_CAEA_SIN_RESPUESTA
+                    )
+                    logging.warning(
+                        "AFIP no respondio al informar con CAEA: se reintenta a las %s",
+                        self._caea_reintento_en,
+                    )
+                    continue
+                else:
+                    # AFIP contesto y rechazo: aca si corresponde marcar error.
+                    d.cae = ""
+                    d.resultado = self.resultado or "E"
+                    d.errmsg = self.errmsg
+                    d.motivoobs = self.motivoobs
+                    d.vencecae = datetime.today()
+                    d.errorprog = (
+                        "CAEA: {caea}\nXML_REQUEST:\n{req}\n\nXML_RESPONSE:\n{res}".format(
+                            caea=datacaea.CAEA,
+                            req=getattr(self, "xml_request", "") or "",
+                            res=respuesta_afip,
+                        )
+                    )
+                    logging.error(
+                        "Error al informar FE con CAEA %s: %s %s",
+                        d.puntovta,
+                        self.errmsg,
+                        self.motivoobs,
+                    )
+                    enviar_correo_alerta_operativa(
+                        to_address=_email_alerta_fe_to(),
+                        from_address=_email_alerta_fe_from(),
+                        subject="Error al informar FE con CAEA",
+                        message="CAEA: {caea}\nPto Vta: {pv}\nError: {err}\nObs: {obs}".format(
+                            caea=datacaea.CAEA,
+                            pv=d.puntovta,
+                            err=DeCodifica(self.errmsg or ""),
+                            obs=DeCodifica(self.motivoobs or ""),
+                        ),
+                        password_email=os.getenv("FASA_ERROR_EMAIL_PASSWORD")
+                        or os.getenv("SMTP_PASSWORD", ""),
+                        xml_request=getattr(self, "xml_request", None),
+                        xml_response=getattr(self, "xml_response", None),
+                    )
+
                 d.save()
                 item = _item_grilla_comprobante(
                     punto_vta=d.puntovta,
@@ -1179,7 +1208,6 @@ class MainController(ControladorBase):
                 self.view.gridFacturas.AgregaItem(
                     items=item, backgroundColor=_color_estado_grilla(d.resultado)
                 )
-                i += 1
             except Exception:
                 # Un comprobante que falla no debe arrastrar al resto ni frenar
                 # el ciclo. Se deja pendiente para reintentar en el proximo

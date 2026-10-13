@@ -87,32 +87,58 @@ def test_genera_caea_no_tiene_handler_muerto_de_doesnotexist():
     assert nombres.isdisjoint({"DoesNotExist", "CAEA"})
 
 
-def test_genera_caea_no_marca_error_cuando_falta_caea():
-    """Marcar resultado='E' dejaba el comprobante muerto: GeneraCAE solo mira
-    tipows='WS', asi que una fila tipows='A' con resultado='E' no se vuelve a
-    procesar nunca."""
+def test_genera_caea_informa_a_afip_y_no_se_marca_autorizado_a_mano():
+    """Marcar resultado='A' con el numero de CAEA en el campo cae dejaba el
+    comprobante 'autorizado' localmente sin haber sido informado nunca, y como
+    resultado != '' el ciclo no lo tomaba mas: la venta se perdia."""
     genera = _function_def("GeneraCAEA")
 
-    valores = []
-    asigna_resultado = False
+    llama_creafe = False
     for node in ast.walk(genera):
-        if not isinstance(node, ast.Assign):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
             continue
-        escribe_resultado = any(
-            isinstance(hijo, ast.Attribute)
-            and hijo.attr == "resultado"
-            and isinstance(hijo.ctx, ast.Store)
-            for hijo in node.targets
-        )
-        if not escribe_resultado:
+        if node.func.attr != "CreaFE":
             continue
-        asigna_resultado = True
-        for hijo in ast.walk(node.value):
-            if isinstance(hijo, ast.Constant) and isinstance(hijo.value, str):
-                valores.append(hijo.value)
+        kwargs = {kw.arg: kw.value for kw in node.keywords}
+        valor = kwargs.get("caea")
+        if isinstance(valor, ast.Constant) and valor.value is True:
+            llama_creafe = True
 
-    assert asigna_resultado, "GeneraCAEA debe seguir escribiendo el resultado"
-    assert "E" not in valores
+    assert llama_creafe, "GeneraCAEA debe informar por AFIP, no marcar autorizado a mano"
+
+    marcados_a_mano = [
+        node
+        for node in ast.walk(genera)
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(t, ast.Attribute) and t.attr == "resultado" for t in node.targets
+        )
+        and any(
+            isinstance(v, ast.Constant) and v.value == "A" for v in ast.walk(node.value)
+        )
+    ]
+    assert not marcados_a_mano
+
+    # Sin respuesta de AFIP no es rechazo del comprobante: se deja pendiente.
+    assert any(isinstance(node, ast.Continue) for node in ast.walk(genera))
+
+
+def test_reintento_tras_caida_de_afip_tiene_backoff():
+    """El ciclo corre cada 500ms y cada intento abre conexion con AFIP."""
+    tree = _tree()
+    constantes = [
+        node.targets[0].id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and isinstance(node.value, ast.Call)
+        and isinstance(node.value.func, ast.Name)
+        and node.value.func.id == "timedelta"
+    ]
+
+    assert "INTERVALO_REINTENTO_CAEA_SIN_RESPUESTA" in constantes
+    assert "INTERVALO_ALERTA_CAEA_AUSENTE" in constantes
 
 
 def test_alerta_de_caea_ausente_esta_limitada_en_frecuencia():
