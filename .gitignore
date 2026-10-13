@@ -53,3 +53,6 @@ __pycache__/
 # Windows metadata
 Thumbs.db
 Desktop.ini
+
+# Scripts de depuracion personal, no forman parte del sistema
+_debug_*.py
