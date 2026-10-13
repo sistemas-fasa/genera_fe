@@ -320,12 +320,30 @@ def test_main_no_verifica_caea_sincronicamente_en_constructor():
 def test_verificacion_caea_programada_mantiene_try_except_y_log():
     root = Path(__file__).resolve().parents[1]
     main_path = root / "controladores" / "Main.py"
-    main_source = main_path.read_text(encoding="utf-8")
     verificar = _function_def(main_path, "_verificar_caea_programado")
-    source = ast.get_source_segment(main_source, verificar)
 
     assert any(isinstance(node, ast.Try) for node in ast.walk(verificar))
-    assert "logging.exception(\"No se pudo verificar/solicitar CAEA programado al iniciar\")" in source
+
+    # Se busca el texto del log via AST para no depender del estilo de comillas
+    # ni del wrapping de la llamada.
+    mensajes = []
+    for node in ast.walk(verificar):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        es_logging_exception = (
+            isinstance(func, ast.Attribute)
+            and func.attr == "exception"
+            and isinstance(func.value, ast.Name)
+            and func.value.id == "logging"
+        )
+        if not es_logging_exception or not node.args:
+            continue
+        primero = node.args[0]
+        if isinstance(primero, ast.Constant) and isinstance(primero.value, str):
+            mensajes.append(primero.value)
+
+    assert "No se pudo verificar/solicitar CAEA programado al iniciar" in mensajes
 
 
 def test_fev1_caea_usa_timeout_y_falla_si_no_conecta():
