@@ -201,6 +201,9 @@ class MainController(ControladorBase):
     afip_estados = None
     afip_ultima_verificacion = None
     afip_intervalo_verificacion = timedelta(minutes=2)
+    # El ciclo de procesamiento corre cada 500ms: sin este tope, la ausencia de
+    # CAEA mandaria una alerta por ciclo.
+    INTERVALO_ALERTA_CAEA_AUSENTE = timedelta(hours=1)
 
     def __init__(self):
         super(MainController, self).__init__()
@@ -208,6 +211,7 @@ class MainController(ControladorBase):
         self.view.initUi()
         self.lProcesa = False
         self._procesando_ciclo = False
+        self._caea_ausente_alertado_en = None
         self._procesamiento_timer = QTimer(self.view)
         self._procesamiento_timer.setInterval(500)
         self._procesamiento_timer.timeout.connect(self._ejecutar_ciclo_procesamiento)
@@ -1051,7 +1055,10 @@ class MainController(ControladorBase):
             Encabezado.listo == True,
             Encabezado.tipows == "A",
         )
-        total = data.count() or 1
+        if not data.exists():
+            return
+
+        total = data.count()
         i = 1.0
         dia = datetime.now().day
         periodo = FechaMysql()[:6]
@@ -1059,9 +1066,30 @@ class MainController(ControladorBase):
             orden = "1"
         else:
             orden = "2"
+
+        # Antes se usaba .get() fuera del try: sin CAEA para el periodo la
+        # excepcion DoesNotExist subia hasta _ejecutar_ciclo_procesamiento y
+        # frenaba todo el ciclo (timer detenido, sin envio de correos). Con
+        # .first() la ausencia de CAEA deja de ser fatal y ademas se evita el
+        # MultipleObjectsReturned de .get() si hubiera mas de un registro.
         datacaea = (
-            CAEA.select().where(CAEA.periodo == periodo, CAEA.orden == orden).get()
+            CAEA.select()
+            .where(
+                CAEA.periodo == periodo,
+                CAEA.orden == orden,
+                CAEA.CAEA != "",
+            )
+            .first()
         )
+        if datacaea is None:
+            logging.warning(
+                "No hay CAEA para periodo %s orden %s: se postergan %s comprobante(s)",
+                periodo,
+                orden,
+                total,
+            )
+            self._alertar_caea_ausente(periodo, orden, total)
+            return
 
         for d in data:
             self.view.lblProcesamiento.setText(
@@ -1097,19 +1125,42 @@ class MainController(ControladorBase):
                 self.view.gridFacturas.AgregaItem(
                     items=item, backgroundColor=_color_estado_grilla(d.resultado)
                 )
-            except CAEA.DoesNotExist:
-                d.resultado = "E"
-                d.errmsg = "No existe CAEA para el periodo y orden"
-                d.vencecae = datetime.today()
-                d.save()
-                enviar_correo_alerta_operativa(
-                    to_address=_email_alerta_fe_to(),
-                    from_address=_email_alerta_fe_from(),
-                    subject="Error al generar FE con CAEA",
-                    message="Error: {}".format(d.errmsg),
-                    password_email=os.getenv("FASA_ERROR_EMAIL_PASSWORD")
-                    or os.getenv("SMTP_PASSWORD", ""),
+                i += 1
+            except Exception:
+                # Un comprobante que falla no debe arrastrar al resto ni frenar
+                # el ciclo. Se deja pendiente para reintentar en el proximo
+                # ciclo en lugar de marcarlo con error.
+                logging.exception(
+                    "No se pudo procesar el comprobante %s-%s con CAEA",
+                    d.puntovta,
+                    d.cbtenro,
                 )
+
+    def _alertar_caea_ausente(self, periodo, orden, total):
+        """Alerta la ausencia de CAEA como maximo una vez por hora.
+
+        El ciclo corre cada 500ms, asi que avisar en cada pasada inundaria la
+        cola de correos. El aviso se rate-limitea y el detalle queda siempre en
+        el log.
+        """
+        ahora = datetime.now()
+        ultima = getattr(self, "_caea_ausente_alertado_en", None)
+        if ultima is not None and ahora - ultima < self.INTERVALO_ALERTA_CAEA_AUSENTE:
+            return
+        self._caea_ausente_alertado_en = ahora
+        enviar_correo_alerta_operativa(
+            to_address=_email_alerta_fe_to(),
+            from_address=_email_alerta_fe_from(),
+            subject="Sin CAEA para el periodo en curso",
+            message=(
+                "No existe CAEA para el periodo {periodo} orden {orden}.\n"
+                "Quedan {total} comprobante(s) pendiente(s) de procesar por CAEA.\n"
+                "No se modificaron: se reintentan solos cuando exista el CAEA.\n"
+                "Revisar la solicitud automatica de CAEA y la vigencia del codigo."
+            ).format(periodo=periodo, orden=orden, total=total),
+            password_email=os.getenv("FASA_ERROR_EMAIL_PASSWORD")
+            or os.getenv("SMTP_PASSWORD", ""),
+        )
 
     def Constatacion(self):
         data = Constatacion.select().where(
