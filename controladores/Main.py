@@ -2,6 +2,7 @@
 import calendar
 from concurrent.futures import ThreadPoolExecutor
 import os
+import tempfile
 import traceback
 import logging
 from datetime import datetime, timedelta
@@ -101,6 +102,8 @@ def enviar_correo_alerta_operativa(
     subject,
     message,
     password_email=None,
+    xml_request=None,
+    xml_response=None,
 ):
     destinatario = _normalizar_texto_config(to_address)
     if not destinatario:
@@ -109,10 +112,39 @@ def enviar_correo_alerta_operativa(
         )
         return False
 
+    adjuntos = []
+
+    if xml_request:
+        path_req = os.path.join(tempfile.gettempdir(), "xml_request_error.xml")
+        try:
+            with open(path_req, "wb") as f:
+                f.write(
+                    xml_request
+                    if isinstance(xml_request, bytes)
+                    else xml_request.encode("utf-8")
+                )
+            adjuntos.append(path_req)
+        except Exception as e:
+            logging.error("Error al guardar xml_request: %s", e)
+
+    if xml_response:
+        path_res = os.path.join(tempfile.gettempdir(), "xml_response_error.xml")
+        try:
+            with open(path_res, "wb") as f:
+                f.write(
+                    xml_response
+                    if isinstance(xml_response, bytes)
+                    else xml_response.encode("utf-8")
+                )
+            adjuntos.append(path_res)
+        except Exception as e:
+            logging.error("Error al guardar xml_response: %s", e)
+
     encolar_email(
         destinatario=destinatario,
         asunto=subject,
         cuerpo_texto=message,
+        adjunto_ruta=",".join(adjuntos) if adjuntos else None,
         quien_envia=_normalizar_texto_config(from_address) or None,
     )
     return True
@@ -238,6 +270,9 @@ class MainController(ControladorBase):
             logging.info(
                 "Monitor AFIP arranque - notificacion por email deshabilitada por configuracion"
             )
+        # Graba xmlrequest.xml y xmlresponse.xml del ultimo comprobante para
+        # poder depurar contra AFIP. Queda en disco, no se guarda en la base.
+        self.grabaxml = True
 
     def _verificar_caea_programado(self):
         try:
@@ -814,37 +849,27 @@ class MainController(ControladorBase):
 
         # cbterel = CbteRel.select().where(CbteRel.nrocontrol == d.nrocontrol)
         cbterel = CbteRel.select().where(CbteRel.nrelacion == d.nrelacion)
-        if len(cbterel) == 0 and tipo_cbte in self.NOTAS_CREDITO_DEBITO:
-            wsfev1.AgregarPeriodoComprobantesAsociados(
-                fecha_desde=fecha_cbte, fecha_hasta=fecha_cbte
-            )
-            logging.warning(
-                "NC/ND sin comprobante relacionado: se informa periodo asociado para nrelacion %s",
-                d.nrelacion,
-            )
-        else:
-            for c in cbterel:
-                tipo = c.tipocbte
-                pto_vta = c.ptovta
-                nro = c.nrocbte
-                try:
-                    movi = Movi.get(
-                        Movi.tipocomp == tipo, Movi.comp == "{}{}".format(pto_vta, nro)
-                    )
-                    fecha_cbte_rel = FechaMysql(movi.fecha)
-                except peewee.DoesNotExist:
-                    fecha_cbte_rel = FechaMysql()
-                print("Fecha cbte rel {}".format(fecha_cbte_rel))
-                if pto_vta in ["0010", "0001", "0004"]:
-                    wsfev1.AgregarPeriodoComprobantesAsociados(
-                        fecha_desde=fecha_cbte_rel, fecha_hasta=fecha_cbte_rel
-                    )
-                elif int(tipo_cbte) in [202, 203]:
-                    wsfev1.AgregarCmpAsoc(
-                        tipo, pto_vta, nro, fecha=fecha_cbte_rel, cuit=int(self.cuit)
-                    )
-                else:
-                    wsfev1.AgregarCmpAsoc(tipo, pto_vta, nro, fecha=fecha_cbte_rel)
+        # Los puntos de venta 0010, 0001 y 0004 estan dados de baja y ya no
+        # emiten, asi que no se avisa periodo para ellos: solo comprobante
+        # asociado. Tampoco se avisa periodo cuando una NC/ND no tiene
+        # comprobante relacionado.
+        for c in cbterel:
+            tipo = c.tipocbte
+            pto_vta = c.ptovta
+            nro = c.nrocbte
+            try:
+                movi = Movi.get(
+                    Movi.tipocomp == tipo, Movi.comp == "{}{}".format(pto_vta, nro)
+                )
+                fecha_cbte_rel = FechaMysql(movi.fecha)
+            except peewee.DoesNotExist:
+                fecha_cbte_rel = FechaMysql()
+            if int(tipo_cbte) in [202, 203]:
+                wsfev1.AgregarCmpAsoc(
+                    tipo, pto_vta, nro, fecha=fecha_cbte_rel, cuit=int(self.cuit)
+                )
+            else:
+                wsfev1.AgregarCmpAsoc(tipo, pto_vta, nro, fecha=fecha_cbte_rel)
 
         if int(tipo_cbte) in [201]:
             # ➕ Agregar el opcional RG (ID 27)
@@ -1017,7 +1042,21 @@ class MainController(ControladorBase):
                     d.errmsg = self.errmsg
                     d.motivoobs = self.motivoobs
                     d.vencecae = datetime.today()
-                    d.motivoobs = self.xml_response
+                    xml_req = self.xml_request or ""
+                    xml_res = self.xml_response or ""
+                    d.errorprog = "XML_REQUEST:\n{}\n\nXML_RESPONSE:\n{}".format(
+                        xml_req, xml_res
+                    )
+                    logging.error(
+                        "Error FE: resultado=%s errmsg=%s motivoobs=%s",
+                        d.resultado,
+                        self.errmsg,
+                        self.motivoobs,
+                    )
+                    if xml_req:
+                        logging.error("XML_REQUEST: %s", xml_req[:500])
+                    if xml_res:
+                        logging.error("XML_RESPONSE: %s", xml_res[:500])
                     if LeerIni(clave="homo") == "N":
                         enviar_correo_alerta_operativa(
                             to_address=to_address,
@@ -1027,6 +1066,8 @@ class MainController(ControladorBase):
                                 DeCodifica(self.errmsg), DeCodifica(self.motivoobs)
                             ),
                             password_email=password_email,
+                            xml_request=self.xml_request,
+                            xml_response=self.xml_response,
                         )
                 d.save()
                 i += 1
@@ -1034,15 +1075,28 @@ class MainController(ControladorBase):
                 d.resultado = "E"
                 d.errmsg = "Error: {}".format(e)
                 d.vencecae = datetime.today()
-                d.errorprog = traceback.format_exc()
+                xml_req = getattr(self, "xml_request", None) or ""
+                xml_res = getattr(self, "xml_response", None) or ""
+                if xml_req or xml_res:
+                    d.errorprog = "TRACEBACK:\n{}\n\nXML_REQUEST:\n{}\n\nXML_RESPONSE:\n{}".format(
+                        traceback.format_exc(), xml_req, xml_res
+                    )
+                else:
+                    d.errorprog = traceback.format_exc()
                 d.save()
-                print("Error: {}".format(e))
+                logging.error("Error al generar FE: %s\n%s", e, traceback.format_exc())
+                if xml_req:
+                    logging.error("XML_REQUEST: %s", xml_req[:500])
+                if xml_res:
+                    logging.error("XML_RESPONSE: %s", xml_res[:500])
                 enviar_correo_alerta_operativa(
                     to_address=to_address,
                     from_address=from_email,
                     subject="Error al generar FE",
                     message="Error: {} {}".format(e, traceback.format_exc()),
                     password_email=password_email,
+                    xml_request=getattr(self, "xml_request", None),
+                    xml_response=getattr(self, "xml_response", None),
                 )
 
         self.view.lblProcesamiento.setText("Sin comprobantes para procesar")

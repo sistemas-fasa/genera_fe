@@ -257,8 +257,20 @@ class PyFPDFPlantilla(FPDF):
             dest = "F"  # guardar en archivo
         return self.template.render(archivo, dest)
 
+    @staticmethod
+    def _sanitizar(valor):
+        """fpdf 1.7.2 solo escribe latin-1.
+
+        Sin esto, un dato con tildes o enye rompe la generacion del PDF con
+        UnicodeEncodeError.
+        """
+        if isinstance(valor, str):
+            return valor.encode("latin-1", errors="replace").decode("latin-1")
+        return valor
+
     def AgregarDato(self, campo, valor, pagina="T"):
         "Agrego un dato a la factura (internamente)"
+        valor = self._sanitizar(valor)
         self.datos.append({"campo": campo, "valor": valor, "pagina": pagina})
         return True
 
@@ -365,6 +377,7 @@ class PyFPDFPlantilla(FPDF):
     @inicializar_y_capturar_excepciones
     def EstableceCampo(self, campo="", valor="", *args, **kwargs):
         f = self.template
+        valor = self._sanitizar(valor)
         # Persistir valor para que se aplique a todas las hojas durante ProcesarPlantilla
         self.comprobante[campo] = valor
         # Si ya existe una página activa, también setearlo inmediatamente
