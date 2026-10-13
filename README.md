@@ -158,6 +158,30 @@ Ejecutar pantalla de informe CAEA:
 python informacaea.py
 ```
 
+Rendir una quincena de CAEA sin intervencion manual:
+
+```powershell
+# Ver que habria que informar, sin tocar nada
+python .\rendir_caea.py --periodo 202606 --orden 1 --dry-run
+
+# Ejecutar de verdad
+python .\rendir_caea.py --periodo 202606 --orden 1 --confirmar
+
+# Ver el estado del rendido de la quincena
+python .\rendir_caea.py --periodo 202606 --orden 1 --estado
+```
+
+El recorrido es automatico sobre todos los puntos de venta habilitados para
+CAEA (los de tipo `A` en `ptovtas`). Es idempotente: lo que ya quedo
+terminado no se vuelve a procesar, salvo que se pase `--todos`. Al terminar
+encola un email con el resumen por punto de venta.
+
+ARCA exige informar, dentro de los 8 dias corridos posteriores al cierre de la
+quincena, tanto los comprobantes emitidos como los puntos de venta que no
+tuvieron movimiento. El servicio `controladores/RendirCAEA.py` deja bitacora de
+cada corrida en la tabla `caea_rendicion` para poder retomar si el proceso se
+corta y para saber que quedo pendiente.
+
 ## Validacion tecnica local
 
 Antes de ejecutar el sistema en una instalacion nueva:
@@ -255,11 +279,12 @@ Migraciones manuales:
 
 ```powershell
 python migrations\ensure_emails_pendientes_schema.py
+python migrations\ensure_caea_rendicion_schema.py
 ```
 
-La migracion se ejecuta contra la base configurada en `sistema.ini`, asume que
-la tabla `emails_pendientes` ya existe y es idempotente: se puede ejecutar mas
-de una vez sin duplicar columnas existentes.
+Las migraciones se ejecutan contra la base configurada en `sistema.ini`, asumen
+que las tablas de las que dependen ya existen y son idempotentes: se pueden
+ejecutar mas de una vez sin duplicar columnas existentes.
 
 ## Logging
 
