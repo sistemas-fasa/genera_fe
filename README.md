@@ -182,6 +182,22 @@ tuvieron movimiento. El servicio `controladores/RendirCAEA.py` deja bitacora de
 cada corrida en la tabla `caea_rendicion` para poder retomar si el proceso se
 corta y para saber que quedo pendiente.
 
+### Probar el rendido sin ARCA
+
+En homologacion no hay ningun punto de venta habilitado para CAEA (ARCA
+responde `1204`) y no se pueden crear, asi que la rama de ARCA respondiendo
+`A` no se puede ejercitar contra el sandbox. Para correrla igual hay un
+script que usa los modelos y la base de verdad pero con un controlador
+simulado, y limpia lo que crea:
+
+```powershell
+python .\scripts\probar_rendido_caea_simulado.py
+python .\scripts\probar_rendido_caea_simulado.py --dejar   # deja las filas
+```
+
+Los tests de `tests/test_rendir_caea.py` corren con modelos fake y no tocan
+MySQL; este script cubre lo que ahi queda afuera.
+
 ## Validacion tecnica local
 
 Antes de ejecutar el sistema en una instalacion nueva:
