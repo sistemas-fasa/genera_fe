@@ -246,6 +246,9 @@ class MainController(ControladorBase):
     afip_estados = None
     afip_ultima_verificacion = None
     afip_intervalo_verificacion = timedelta(minutes=2)
+    # La ventana para pedir la quincena siguiente se abre con la app ya
+    # corriendo: ademas del chequeo del arranque hay que reverificar cada tanto.
+    INTERVALO_VERIFICACION_CAEA_MINUTOS_DEFAULT = 10
     # El ciclo de procesamiento corre cada 500ms: sin este tope, la ausencia de
     # CAEA mandaria una alerta por ciclo.
     INTERVALO_ALERTA_CAEA_AUSENTE = timedelta(hours=1)
@@ -267,6 +270,10 @@ class MainController(ControladorBase):
         self.model = ModeloBase()
         self.model.getDb()
         QTimer.singleShot(1000, self._verificar_caea_programado)
+        self._caea_timer = QTimer(self.view)
+        self._caea_timer.setInterval(self._intervalo_verificacion_caea_ms())
+        self._caea_timer.timeout.connect(self._verificar_caea_programado)
+        self._caea_timer.start()
         self._actualizar_estado_operativo_afip()
         self._actualizar_estado_operativo_emails()
         self.afip_intervalo_verificacion = self._leer_intervalo_verificacion_afip()
@@ -341,6 +348,20 @@ class MainController(ControladorBase):
             logging.exception(
                 "No se pudo sincronizar contingencia CAEA para imprefiscal"
             )
+
+    def _intervalo_verificacion_caea_ms(self):
+        valor_ini = LeerIni(clave="caea_intervalo_verificacion_minutos")
+        try:
+            minutos = (
+                int(valor_ini)
+                if valor_ini
+                else self.INTERVALO_VERIFICACION_CAEA_MINUTOS_DEFAULT
+            )
+            if minutos < 1:
+                minutos = 1
+        except (TypeError, ValueError):
+            minutos = self.INTERVALO_VERIFICACION_CAEA_MINUTOS_DEFAULT
+        return minutos * 60 * 1000
 
     def _leer_intervalo_verificacion_afip(self):
         valor_ini = LeerIni(clave="afip_intervalo_verificacion_minutos")

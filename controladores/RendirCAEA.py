@@ -127,6 +127,24 @@ def _marcar_terminado(fila, total, ok, errores, ultimo_error, ahora):
     return fila
 
 
+def _guardar_xml_sin_movimiento(fe, ptovta):
+    """Deja el XML del aviso rechazado para poder diagnosticarlo despues."""
+    sufijo = normalizar_ptovta(ptovta)
+    for nombre, contenido in (
+        ("xmlrequest_sin_movimiento_{}.xml".format(sufijo), getattr(fe, "xml_request", "")),
+        ("xmlresponse_sin_movimiento_{}.xml".format(sufijo), getattr(fe, "xml_response", "")),
+    ):
+        try:
+            if isinstance(contenido, bytes):
+                with open(nombre, "wb") as archivo:
+                    archivo.write(contenido)
+            else:
+                with open(nombre, "w", encoding="utf-8") as archivo:
+                    archivo.write(contenido or "")
+        except Exception:
+            logging.exception("No se pudo grabar %s del aviso sin movimiento", nombre)
+
+
 def rendir_ptovta(
     periodo,
     orden,
@@ -211,16 +229,18 @@ def rendir_ptovta(
 
         # Punto de venta habilitado que no emitio nada: hay que informarlo
         # igual, porque ARCA exige declarar los que no tuvieron movimiento.
+        fe = fe_factory()
         try:
-            fe_factory().InformarCAEASinMovimiento(ptovta, caea)
+            fe.InformarCAEASinMovimiento(ptovta, caea)
             fila.sin_movimiento = True
             fila.save()
-        except Exception:
+        except Exception as exc:
+            _guardar_xml_sin_movimiento(fe, ptovta)
             logging.exception(
                 "No se pudo informar el CAEA sin movimiento de %s", ptovta
             )
             errores += 1
-            ultimo_error = "sin movimiento: {}".format(ptovta)
+            ultimo_error = "sin movimiento {}: {}".format(ptovta, exc)
             _marcar_terminado(fila, 0, 0, errores, ultimo_error, datetime.now())
             return {
                 "ptovta": ptovta,
@@ -393,7 +413,7 @@ def rendir(
         puntos = listar_ptovta_caea(empresa_id, ptovta_model=ptovta_model)
 
     if not puntos:
-        return {
+        resumen = {
             "periodo": periodo,
             "orden": str(orden),
             "ok": False,
@@ -401,6 +421,9 @@ def rendir(
             "mensaje": "No hay puntos de venta habilitados para CAEA",
             "omitidos": [],
         }
+        if avisar:
+            enviar_resumen(resumen, notificador=notificador)
+        return resumen
 
     omitidos = []
     detalle = []
@@ -411,20 +434,37 @@ def rendir(
         if solo_pendientes and fila.estado == ESTADO_TERMINADO:
             omitidos.append(punto)
             continue
-        detalle.append(
-            rendir_ptovta(
-                periodo,
-                orden,
-                punto,
-                empresa_id=empresa_id,
-                caea_model=caea_model,
-                rendicion_model=rendicion_model,
-                encabezado_model=encabezado_model,
-                fe_factory=fe_factory,
-                controlador_factory=controlador_factory,
-                controlador=controlador,
+        try:
+            detalle.append(
+                rendir_ptovta(
+                    periodo,
+                    orden,
+                    punto,
+                    empresa_id=empresa_id,
+                    caea_model=caea_model,
+                    rendicion_model=rendicion_model,
+                    encabezado_model=encabezado_model,
+                    fe_factory=fe_factory,
+                    controlador_factory=controlador_factory,
+                    controlador=controlador,
+                )
             )
-        )
+        except Exception as exc:
+            # Un punto de venta que explota no puede impedir el aviso del resto
+            # ni dejar al operador sin el email con el resultado de la corrida.
+            logging.exception("No se pudo rendir el CAEA del punto de venta %s", punto)
+            detalle.append(
+                {
+                    "ptovta": punto,
+                    "ok": False,
+                    "motivo": str(exc),
+                    "total": 0,
+                    "ok_count": 0,
+                    "error_count": 1,
+                    "sin_movimiento": False,
+                    "ya_informado": False,
+                }
+            )
 
     resumen = {
         "periodo": periodo,
@@ -441,7 +481,7 @@ def rendir(
 
 
 def _mensaje_resumen(detalle, omitidos):
-    if not detalle:
+    if not detalle and not omitidos:
         return "Nada pendiente para informar."
     lineas = []
     for item in detalle:

@@ -509,3 +509,19 @@ def test_script_caea_programado_exige_confirmacion_para_ejecucion_real():
     assert resultado.returncode != 0
     assert "--confirmar" in resultado.stderr
     assert "puede llamar a AFIP real" in resultado.stderr
+
+
+def test_main_reverifica_caea_programado_periodicamente():
+    """La ventana de una quincena nueva puede abrirse con la app ya abierta."""
+    root = Path(__file__).resolve().parents[1]
+    main_path = root / "controladores" / "Main.py"
+    fuente = main_path.read_text(encoding="utf-8")
+    init = ast.get_source_segment(fuente, _function_def(main_path, "__init__"))
+
+    assert "caea_intervalo_verificacion_minutos" in fuente
+    assert "_caea_timer" in init
+    assert "timeout.connect(self._verificar_caea_programado)" in init
+    assert ".start()" in init
+    assert "caea_intervalo_verificacion_minutos" in (
+        root / "sistema.ini.example"
+    ).read_text(encoding="utf-8")

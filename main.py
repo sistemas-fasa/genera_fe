@@ -28,7 +28,9 @@ from libs.Utiles import initialize_logger
 
 from controladores.FE import FEv1
 from controladores.Main import MainController, _email_alerta_fe_from, _email_alerta_fe_to, enviar_correo_alerta_operativa
+from controladores.RendirCAEA import _mensaje_resumen, enviar_resumen
 from libs.Utiles import LeerIni, FechaMysql, DeCodifica
+from modelos.CAEA import CAEA
 from modelos.Encabezado import Encabezado
 
 
@@ -68,6 +70,12 @@ if __name__ == "__main__":
     elif "--informacaea" in sys.argv:
         punto_vta = sys.argv[sys.argv.index("--informacaea")+1]
         caea = sys.argv[sys.argv.index("--informacaea") + 2]
+        registro_caea = CAEA.select().where(CAEA.CAEA == caea).first()
+        periodo = registro_caea.periodo if registro_caea else FechaMysql()[:6]
+        orden = str(registro_caea.orden) if registro_caea else (
+            '2' if FechaMysql()[-2:] > '15' else '1'
+        )
+        detalle = []
 
         data = Encabezado.select().where(Encabezado.resultado == 'A',
                                          Encabezado.tipows == 'A',
@@ -75,7 +83,16 @@ if __name__ == "__main__":
                                          Encabezado.cae == caea)
         if data.count() == 0:
             wsfe = FEv1()
-            wsfe.InformarCAEASinMovimiento(punto_vta, caea)
+            try:
+                wsfe.InformarCAEASinMovimiento(punto_vta, caea)
+                detalle.append({"ptovta": punto_vta, "ok": True,
+                                "sin_movimiento": True, "ok_count": 0,
+                                "error_count": 0, "motivo": ""})
+            except Exception as exc:
+                logging.exception("No se pudo informar el CAEA sin movimiento de %s", punto_vta)
+                detalle.append({"ptovta": punto_vta, "ok": False,
+                                "sin_movimiento": False, "ok_count": 0,
+                                "error_count": 1, "motivo": str(exc)})
         else:
             controlador = MainController()
             for d in data:
@@ -86,6 +103,9 @@ if __name__ == "__main__":
                     d.resultado = controlador.resultado
                     d.cbtenro = str(controlador.comprobante).zfill(8)
                     d.vencecae = datetime.strptime(controlador.vencecae, '%Y%m%d')
+                    detalle.append({"ptovta": d.puntovta, "ok": True,
+                                    "sin_movimiento": False, "ok_count": 1,
+                                    "error_count": 0, "motivo": ""})
                 else:
                     d.resultado = controlador.resultado
                     d.errmsg = controlador.errmsg
@@ -99,6 +119,18 @@ if __name__ == "__main__":
                                                       DeCodifica(controlador.motivoobs)),
                         password_email=os.getenv('FASA_ERROR_EMAIL_PASSWORD') or os.getenv('SMTP_PASSWORD', '')
                     )
+                    detalle.append({"ptovta": d.puntovta, "ok": False,
+                                    "sin_movimiento": False, "ok_count": 0,
+                                    "error_count": 1, "motivo": str(controlador.errmsg)})
                 d.save()
+
+        resumen = {
+            "periodo": periodo,
+            "orden": orden,
+            "ok": all(item["ok"] for item in detalle),
+            "detalle": detalle,
+            "mensaje": _mensaje_resumen(detalle, []),
+        }
+        enviar_resumen(resumen)
     else:
         inicio()

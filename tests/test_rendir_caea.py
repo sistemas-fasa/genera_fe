@@ -1,9 +1,12 @@
 """Tests del servicio de rendido de CAEA, sin AFIP, sin base y sin PyQt."""
 from datetime import date
 
+import pytest
+
 from controladores.RendirCAEA import (
     ESTADO_CON_ERRORES,
     ESTADO_TERMINADO,
+    _mensaje_resumen,
     contar_pendientes,
     listar_ptovta_caea,
     obtener_caea,
@@ -170,11 +173,41 @@ class FEFake:
     def __init__(self, falla=False):
         self.informados = []
         self.falla = falla
+        self.xml_request = "<request/>"
+        self.xml_response = "<response/>"
 
     def InformarCAEASinMovimiento(self, ptovta, caea):
         if self.falla:
             raise RuntimeError("AFIP no responde")
         self.informados.append((ptovta, caea))
+
+
+@pytest.fixture
+def fe_sin_red():
+    """FEv1 sin red: import perezoso porque pyafipws parchea ConfigParser."""
+    from controladores.FE import FEv1
+
+    class FESinRed(FEv1):
+        def __init__(self, resultado, errmsg=""):
+            self.WSDL = "http://fake/wsdl"
+            self.Resultado = resultado
+            self.ErrMsg = errmsg
+            self.Obs = ""
+            self.Excepcion = ""
+
+        def Conectar(self, *args, **kwargs):
+            return True
+
+        def Autenticar(self):
+            return "<ticket/>"
+
+        def SetTicketAcceso(self, ta_string=None):
+            pass
+
+        def CAEASinMovimientoInformar(self, ptovta, caea):
+            return self.Resultado
+
+    return FESinRed
 
 
 class ControladorFake:
@@ -357,7 +390,8 @@ def test_sin_caea_no_se_informa_nada():
     assert piezas["kwargs"]["rendicion_model"].filas == {}
 
 
-def test_afip_caido_en_el_sin_movimiento_queda_registrado():
+def test_afip_caido_en_el_sin_movimiento_queda_registrado(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     piezas = _base(encabezados=[], fe_falla=True)
 
     resumen = rendir_ptovta("202606", "1", "0022", **piezas["kwargs"])
@@ -510,7 +544,8 @@ def test_contar_pendientes_sin_caea_no_devuelve_nada():
     ) == []
 
 
-def test_se_avisa_con_un_resumen_del_rendido():
+def test_se_avisa_con_un_resumen_del_rendido(monkeypatch):
+    monkeypatch.delenv("CAEA_NOTIFICACION_EMAIL", raising=False)
     enviados = []
     piezas = _rindir(
         encabezados=[],
@@ -522,6 +557,7 @@ def test_se_avisa_con_un_resumen_del_rendido():
     rendir("202606", "1", empresa_id=1, **piezas["kwargs"])
 
     assert len(enviados) == 1
+    assert enviados[0]["destinatario"] == "sistemas@ferreteriaavenida.com.ar"
     cuerpo = enviados[0]["cuerpo_texto"]
     assert "202606" in cuerpo
     assert "0022" in cuerpo
@@ -540,3 +576,58 @@ def test_listar_ptovta_caea_solo_toma_los_de_tipo_a():
     resultado = listar_ptovta_caea(1, ptovta_model=PtoVtaModelFake(filas))
 
     assert resultado == ["0022", "0023"]
+
+
+def test_fe_rechaza_sin_movimiento_si_arca_no_devuelve_resultado_a(fe_sin_red):
+    """pyafipws no lanza ante un rechazo: FE debe convertirlo en error."""
+    fe = fe_sin_red(resultado="R", errmsg="1204: punto de venta no habilitado")
+
+    with pytest.raises(RuntimeError) as exc:
+        fe.InformarCAEASinMovimiento("0022", CAEA)
+
+    assert "1204" in str(exc.value)
+
+
+def test_fe_rechaza_sin_movimiento_si_no_hay_resultado(fe_sin_red):
+    fe = fe_sin_red(resultado="")
+
+    with pytest.raises(RuntimeError):
+        fe.InformarCAEASinMovimiento("0022", CAEA)
+
+
+def test_fe_acepta_sin_movimiento_cuando_arca_devuelve_resultado_a(fe_sin_red):
+    fe_sin_red(resultado="A").InformarCAEASinMovimiento("0022", CAEA)
+
+
+def test_rechazo_sin_movimiento_guarda_xml_para_diagnostico(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    piezas = _base(encabezados=[], fe_falla=True)
+
+    resumen = rendir_ptovta("202606", "1", "0022", **piezas["kwargs"])
+
+    assert resumen["ok"] is False
+    assert resumen["error_count"] == 1
+    assert resumen["sin_movimiento"] is False
+    assert (tmp_path / "xmlrequest_sin_movimiento_0022.xml").read_text() == "<request/>"
+    assert (tmp_path / "xmlresponse_sin_movimiento_0022.xml").read_text() == "<response/>"
+
+
+def test_se_avisa_aun_cuando_no_hay_puntos_de_venta():
+    enviados = []
+    piezas = _rindir(
+        encabezados=[],
+        ptovtas=[],
+        avisar=True,
+        notificador=lambda **kwargs: enviados.append(kwargs),
+    )
+
+    resumen = rendir("202606", "1", empresa_id=1, **piezas["kwargs"])
+
+    assert resumen["ok"] is False
+    assert len(enviados) == 1
+    assert "No hay puntos de venta habilitados" in enviados[0]["cuerpo_texto"]
+    assert "con errores" in enviados[0]["asunto"]
+
+
+def test_el_mensaje_del_resumen_incluye_ya_terminados_aunque_no_haya_detalle():
+    assert "ya terminados: 0022" in _mensaje_resumen([], ["0022"])
