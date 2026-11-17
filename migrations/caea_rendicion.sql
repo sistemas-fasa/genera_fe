@@ -24,6 +24,6 @@ CREATE TABLE IF NOT EXISTS caea_rendicion (
   UNIQUE KEY idx_empresa_periodo_orden_ptovta (empresa_id, periodo, orden, ptovta)
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 
--- Verificacion: debe devolver la tabla con 15 columnas y el indice unico.
+-- Verificacion: debe devolver la tabla con 14 columnas y el indice unico.
 SHOW COLUMNS FROM caea_rendicion;
 SHOW INDEX FROM caea_rendicion;
