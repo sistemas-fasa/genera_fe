@@ -39,6 +39,7 @@ from libs.Utiles import (
 )
 from libs.Avisos import mostrar_error, traducir_excepcion
 from libs.PanelDiagnostico import PanelDiagnostico
+from libs.VistaStub import VistaStub
 from modelos.CAEA import CAEA
 from modelos.CUIT import CUIT
 from modelos.CbteRelacionado import CbteRel
@@ -256,19 +257,32 @@ class MainController(ControladorBase):
     # El ciclo corre cada 500ms y cada intento abre conexión con AFIP.
     INTERVALO_REINTENTO_CAEA_SIN_RESPUESTA = timedelta(minutes=2)
 
-    def __init__(self):
-        super(MainController, self).__init__()
-        self.view = MainView()
-        self.view.initUi()
+    def __init__(self, view=None, modo_servicio=False):
+        self.modo_servicio = modo_servicio
+        if modo_servicio:
+            # Worker del rendido: reutiliza CreaFE sin timers, sin segunda
+            # MainView y sin mail de arranque. No se llama a super().__init__()
+            # porque ControladorBase crea un VistaBase (QDialog) y eso no se
+            # puede hacer en un hilo que no es el de la GUI.
+            self.view = view or VistaStub()
+        else:
+            super(MainController, self).__init__()
+            self.view = view or MainView()
         self.lProcesa = False
         self._procesando_ciclo = False
         self._caea_ausente_alertado_en = None
+        self.model = ModeloBase()
+        self.model.getDb()
+        # Graba xmlrequest.xml y xmlresponse.xml del ultimo comprobante para
+        # poder depurar contra AFIP. Queda en disco, no se guarda en la base.
+        self.grabaxml = True
+        if modo_servicio:
+            return
+        self.view.initUi()
         self._procesamiento_timer = QTimer(self.view)
         self._procesamiento_timer.setInterval(500)
         self._procesamiento_timer.timeout.connect(self._ejecutar_ciclo_procesamiento)
         self.conectarWidgets()
-        self.model = ModeloBase()
-        self.model.getDb()
         QTimer.singleShot(1000, self._verificar_caea_programado)
         self._caea_timer = QTimer(self.view)
         self._caea_timer.setInterval(self._intervalo_verificacion_caea_ms())
@@ -293,9 +307,6 @@ class MainController(ControladorBase):
             logging.info(
                 "Monitor AFIP arranque - notificacion por email deshabilitada por configuracion"
             )
-        # Graba xmlrequest.xml y xmlresponse.xml del ultimo comprobante para
-        # poder depurar contra AFIP. Queda en disco, no se guarda en la base.
-        self.grabaxml = True
 
     def _verificar_caea_programado(self):
         try:
