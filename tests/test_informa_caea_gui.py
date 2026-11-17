@@ -88,3 +88,11 @@ def test_rendir_del_worker_pasa_todos_los_ptovtas_cuando_esta_vacio(monkeypatch)
     assert capturado["periodo"] == "202610"
     assert capturado["kwargs"]["ptovta"] is None
     assert capturado["kwargs"]["controlador"] is controlador
+
+
+def test_main_importa_informa_caea_para_pyinstaller():
+    fuente = ENTRY.read_text(encoding="utf-8")
+    assert (
+        "from controladores.InformaCAEA import InformaCAEAController"
+        in fuente
+    )

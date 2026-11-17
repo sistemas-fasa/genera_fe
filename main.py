@@ -27,6 +27,9 @@ from datetime import datetime
 from libs.Utiles import initialize_logger
 
 from controladores.FE import FEv1
+# Import de modulo para que PyInstaller incluya el dialogo de rendido: sin
+# esta referencia main.spec (datas=[], hiddenimports=[]) no lo empaqueta.
+from controladores.InformaCAEA import InformaCAEAController  # noqa: F401
 from controladores.Main import MainController, _email_alerta_fe_from, _email_alerta_fe_to, enviar_correo_alerta_operativa
 from controladores.RendirCAEA import _mensaje_resumen, enviar_resumen
 from libs.Utiles import LeerIni, FechaMysql, DeCodifica
