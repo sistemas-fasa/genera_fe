@@ -54,3 +54,37 @@ def test_quincena_anterior_calcula_la_cerrada():
     assert quincena_anterior("202611", "1") == ("202610", "2")
     assert quincena_anterior("202611", "2") == ("202611", "1")
     assert quincena_anterior("202601", "1") == ("202512", "2")
+
+
+def test_dialogo_muestra_resultado_y_no_mata_la_app():
+    vista = (ROOT / "vistas" / "InformaCAEA.py").read_text(encoding="utf-8")
+    fuente = INFORMA.read_text(encoding="utf-8")
+
+    assert "self.lblResultado = Etiqueta" in vista
+    assert "QApplication.exit" not in fuente
+    assert "PausarProcesamiento" not in fuente
+    assert "ThreadPoolExecutor" in fuente
+    assert "pyqtSignal" in fuente
+    assert "modo_servicio=True" in fuente
+
+
+def test_rendir_del_worker_pasa_todos_los_ptovtas_cuando_esta_vacio(monkeypatch):
+    import controladores.InformaCAEA as modulo
+
+    capturado = {}
+
+    def rendir_falso(periodo, orden, **kwargs):
+        capturado.update(periodo=periodo, orden=orden, kwargs=kwargs)
+        return {"ok": True, "mensaje": "listo", "detalle": []}
+
+    monkeypatch.setattr(modulo, "rendir", rendir_falso)
+    controlador = object()
+    dialogo = modulo.InformaCAEAController.__new__(modulo.InformaCAEAController)
+    dialogo.controlador = controlador
+
+    resumen = dialogo._rendir("202610", "2", "")
+
+    assert resumen["ok"] is True
+    assert capturado["periodo"] == "202610"
+    assert capturado["kwargs"]["ptovta"] is None
+    assert capturado["kwargs"]["controlador"] is controlador
