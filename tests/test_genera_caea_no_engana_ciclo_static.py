@@ -172,3 +172,15 @@ def test_genera_caea_sigue_llamando_al_avisador_de_caea_ausente():
     ]
 
     assert "_alertar_caea_ausente" in llamadas
+
+
+def test_genera_caea_no_le_roba_comprobantes_a_la_quincena_cerrada():
+    """Un pendiente que ya lleva el CAEA de otra quincena le pertenece a esa
+    quincena: lo informa la rendicion. Si el ciclo se lo lleva, le sobrescribe
+    el CAEA con el de la quincena actual y la rendicion informa 0."""
+    genera = _function_def("GeneraCAEA")
+    source = ast.get_source_segment(_source(), genera) or ""
+
+    assert "Encabezado.cae" in source
+    assert "is_null" in source
+    assert "Encabezado.cae == datacaea.CAEA" in source

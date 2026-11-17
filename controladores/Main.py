@@ -1131,24 +1131,6 @@ class MainController(ControladorBase):
 
     # genera facturas con CAEA para el caso de que no haya internet
     def GeneraCAEA(self):
-        data = Encabezado.select().where(
-            Encabezado.resultado == "",
-            Encabezado.listo == True,
-            Encabezado.tipows == "A",
-        )
-        if not data.exists():
-            return
-
-        reintento_en = getattr(self, "_caea_reintento_en", None)
-        if reintento_en is not None and datetime.now() < reintento_en:
-            logging.debug(
-                "GeneraCAEA en espera por falta de respuesta de AFIP: reintento a las %s",
-                reintento_en,
-            )
-            return
-
-        total = data.count()
-        i = 1.0
         dia = datetime.now().day
         periodo = FechaMysql()[:6]
         if dia <= 15:
@@ -1170,6 +1152,39 @@ class MainController(ControladorBase):
             )
             .first()
         )
+
+        data = Encabezado.select().where(
+            Encabezado.resultado == "",
+            Encabezado.listo == True,
+            Encabezado.tipows == "A",
+        )
+        if not data.exists():
+            return
+
+        # Un comprobante pendiente que ya lleva un CAEA de otra quincena le
+        # pertenece a esa quincena: lo atiende la rendicion, no este ciclo.
+        # Sin este guard el ciclo le sobrescribiria el CAEA con el de la
+        # quincena actual y la rendicion de la cerrada se quedaria sin
+        # comprobantes para informar.
+        if datacaea is not None:
+            data = data.where(
+                (Encabezado.cae == "")
+                | Encabezado.cae.is_null()
+                | (Encabezado.cae == datacaea.CAEA)
+            )
+            if not data.exists():
+                return
+
+        reintento_en = getattr(self, "_caea_reintento_en", None)
+        if reintento_en is not None and datetime.now() < reintento_en:
+            logging.debug(
+                "GeneraCAEA en espera por falta de respuesta de AFIP: reintento a las %s",
+                reintento_en,
+            )
+            return
+
+        total = data.count()
+        i = 1.0
         if datacaea is None:
             logging.warning(
                 "No hay CAEA para periodo %s orden %s: se postergan %s comprobante(s)",
