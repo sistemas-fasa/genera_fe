@@ -41,11 +41,19 @@ def _es_email(valor):
 
 
 def _resolver_remitente(quien_envia, smtp_from_env, empresa_usuario, smtp_user):
-    """Resuelve el From alineado: quien_envia > SMTP_FROM > usuario empresa (si es email) > user (si es email)."""
-    for candidato in (quien_envia, smtp_from_env, empresa_usuario, smtp_user):
+    """Resuelve el From alineado con la cuenta que autentica en el SMTP.
+
+    Prioridad: quien_envia > usuario_correo de la empresa > SMTP_FROM (.env) >
+    usuario SMTP. El usuario_correo de la empresa debe ir antes que el .env:
+    la empresa 1 autentica en smtp-relay.gmail.com como
+    sistemas@ferreteriaavenida.com.ar pero el .env tiene SMTP_FROM=info@fasa.ar;
+    al prevalecer el .env, Google rechazaba el MAIL FROM con 550 5.7.0.
+    """
+    candidatos = (quien_envia, empresa_usuario, smtp_from_env, smtp_user)
+    for candidato in candidatos:
         if _es_email(candidato):
             return str(candidato).strip()
-    for candidato in (quien_envia, smtp_from_env, empresa_usuario, smtp_user):
+    for candidato in candidatos:
         if candidato and str(candidato).strip():
             return str(candidato).strip()
     return ""
@@ -115,6 +123,7 @@ def encolar_email(
     cc=None,
     cco=None,
     quien_envia=None,
+    empresa_id=None,
 ):
     """
     Función helper para encolar un email pendiente desde cualquier parte del sistema.
@@ -129,6 +138,8 @@ def encolar_email(
         cc: Emails en copia (separados por coma) (opcional)
         cco: Emails en copia oculta (separados por coma) (opcional)
         quien_envia: Email del remitente personalizado (opcional, si no se usa el configurado)
+        empresa_id: Empresa emisora (opcional). Permite al envío elegir la
+            configuración SMTP correcta en vez de caer en el default.
 
     Returns:
         EmailPendiente: El registro creado
@@ -145,7 +156,7 @@ def encolar_email(
             "El comprobante no se enviaría.".format(", ".join(faltantes))
         )
 
-    email = EmailPendiente.create(
+    datos = dict(
         destinatario=destinatario,
         asunto=asunto,
         cuerpo_html=cuerpo_html,
@@ -156,6 +167,9 @@ def encolar_email(
         cco=cco,
         quien_envia=quien_envia,
     )
+    if empresa_id is not None:
+        datos["empresa_id"] = empresa_id
+    email = EmailPendiente.create(**datos)
     logging.info(f"📥 Email encolado ID {email.id} para {destinatario}")
     return email
 
@@ -184,11 +198,31 @@ def _parsear_destinatarios(destinatarios_str):
     return unicos
 
 
+PREFIJO_NOTIFICACION_FALLO = "⚠️ Fallo de envío de email ID "
+
+
+def _es_notificacion_de_fallo(email_registro):
+    """True si el email que falló ya era una notificación de fallo."""
+    asunto = getattr(email_registro, "asunto", "") or ""
+    return str(asunto).startswith(PREFIJO_NOTIFICACION_FALLO)
+
+
 def _notificar_fallo_final(email_registro, error_msg):
     """
     Encola un email de notificación cuando un email alcanza el máximo de intentos.
     El email se envía al administrador configurado en parámetros del sistema.
+
+    Una notificación que vuelve a fallar NO debe generar otra notificación:
+    eso produjo una cascada de cientos de miles de emails en producción.
     """
+    if _es_notificacion_de_fallo(email_registro):
+        logging.warning(
+            "⚠️ No se encola notificación de fallo para otra notificación (ID %s) "
+            "para evitar cascada",
+            getattr(email_registro, "id", "?"),
+        )
+        return
+
     try:
         email_admin = ParamSist.ObtenerParametro("EMAIL_ADMIN_NOTIFICACIONES")
         if not email_admin:
@@ -197,7 +231,7 @@ def _notificar_fallo_final(email_registro, error_msg):
             )
             return
 
-        asunto = f"⚠️ Fallo de envío de email ID {email_registro.id}"
+        asunto = f"{PREFIJO_NOTIFICACION_FALLO}{email_registro.id}"
 
         cuerpo_html = f"""
         <!DOCTYPE html>
@@ -246,12 +280,14 @@ def _notificar_fallo_final(email_registro, error_msg):
         </html>
         """
 
-        # Encolar la notificación (sin CC/CCO para evitar loops)
+        # Encolar la notificación (sin CC/CCO para evitar loops).
+        # Heredar empresa_id del email original para que use su config SMTP.
         encolar_email(
             destinatario=email_admin,
             asunto=asunto,
             cuerpo_html=cuerpo_html,
             cuerpo_texto=f"Fallo de envío de email ID {email_registro.id} a {email_registro.destinatario}. Error: {error_msg[:500]}",
+            empresa_id=getattr(email_registro, "empresa_id", None),
         )
         logging.info(f"📧 Notificación de fallo encolada para {email_admin}")
 
@@ -469,10 +505,10 @@ def enviar_email_en_hilo(email_id):
         # autentica (SPF/DKIM). Nunca mezclar: autenticar con una cuenta
         # (ej. facturas@fasa.ar) y poner From de otro dominio
         # (ej. ventas@ferreteriaavenida.com.ar) provoca fallo DMARC -> spam.
-        # Prioridad: quien_envia del email > SMTP_FROM (.env, opcional) >
-        # usuario_correo de la empresa (solo si es email, no API key) >
-        # usuario SMTP (idem). Sin .env, manda usuario_correo: por eso cada
-        # empresa debe autenticar con su propia dirección.
+        # Prioridad: quien_envia del email > usuario_correo de la empresa >
+        # SMTP_FROM (.env, solo como fallback) > usuario SMTP. El usuario de
+        # la empresa va antes del .env para alinear el From con la cuenta que
+        # autentica (Google relay rechaza un MAIL FROM de otro dominio).
         email_from = _resolver_remitente(
             getattr(email_registro, "quien_envia", None),
             smtp_from_env,
