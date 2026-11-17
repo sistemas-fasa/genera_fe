@@ -43,6 +43,21 @@ def _quincena_siguiente(periodo, orden):
     return "{:04d}{:02d}".format(anio, mes + 1), "1"
 
 
+def quincena_anterior(periodo, orden):
+    """Devuelve (periodo, orden) de la quincena inmediatamente anterior.
+
+    Es la que debe rendirse: siempre es distinta de la actual, que es la
+    unica que usa GeneraCAEA en el ciclo principal.
+    """
+    anio = int(periodo[:4])
+    mes = int(periodo[4:6])
+    if orden == "1":
+        if mes == 1:
+            return "{:04d}{:02d}".format(anio - 1, 12), "2"
+        return "{:04d}{:02d}".format(anio, mes - 1), "2"
+    return "{:04d}{:02d}".format(anio, mes), "1"
+
+
 def _ventana_solicitud(periodo, orden):
     """(desde, hasta) en que ARCA admite pedir el CAEA de esa quincena.
 

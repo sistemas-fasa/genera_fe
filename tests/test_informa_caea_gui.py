@@ -46,3 +46,11 @@ def test_abrir_rendir_no_pausa_el_ciclo():
     cuerpo = ast.get_source_segment(fuente, metodo)
     assert "PausarProcesamiento" not in cuerpo
     assert "from controladores.InformaCAEA import InformaCAEAController" in cuerpo
+
+
+def test_quincena_anterior_calcula_la_cerrada():
+    from controladores.CAEAProgramado import quincena_anterior
+
+    assert quincena_anterior("202611", "1") == ("202610", "2")
+    assert quincena_anterior("202611", "2") == ("202611", "1")
+    assert quincena_anterior("202601", "1") == ("202512", "2")
