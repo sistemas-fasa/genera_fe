@@ -1218,6 +1218,10 @@ class MainController(ControladorBase):
                     self._caea_reintento_en = None
                     d.cae = self.cae
                     d.resultado = self.resultado
+                    # Legacy lee este flag, no resultado: sin marcarlo el
+                    # comprobante queda "informado" para el ciclo y pendiente
+                    # para los procesos viejos.
+                    d.caeainformado = 1
                     d.cbtenro = str(self.comprobante).zfill(8)
                     d.vencecae = (
                         datetime.strptime(self.vencecae, "%Y%m%d")

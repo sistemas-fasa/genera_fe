@@ -276,6 +276,10 @@ def rendir_ptovta(
                 # Resultado que respondio AFIP.
                 encabezado.cae = controlador.cae
                 encabezado.resultado = controlador.resultado
+                # Legacy lee este flag, no resultado: sin marcarlo el
+                # comprobante queda "informado" para el servicio y pendiente
+                # para los procesos viejos.
+                encabezado.caeainformado = 1
                 encabezado.cbtenro = str(controlador.comprobante).zfill(8)
                 # AFIP no define vencimiento para CAEA: se usa la fecha tope de
                 # informe del propio CAEA.

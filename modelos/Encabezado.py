@@ -40,6 +40,10 @@ class Encabezado(ModeloBase):
     concepto = CharField(max_length=1, default=FEv1.PRODUCTOS)
     errorprog = TextField()
     listo = BitBooleanField()
+    # Los procesos legacy consultan este flag para saber que el comprobante ya
+    # fue informado a ARCA con el CAEA. El campo resultado tambien lo marca,
+    # pero el codigo legacy no lo conoce.
+    caeainformado = BitBooleanField(default=0)
     tipows = CharField(max_length=2, default="WS")
     nrelacion = IntegerField(default=0)
     condicion_iva_receptor_id = IntegerField(default=5)

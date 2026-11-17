@@ -144,6 +144,7 @@ class EncabezadoFake:
         self.cae = cae
         self.tipows = "A"
         self.resultado = ""
+        self.caeainformado = 0
         self.errmsg = ""
         self.motivoobs = ""
         self.vencecae = None
@@ -331,6 +332,8 @@ def test_comprobantes_se_informan_y_quedan_marcados_con_el_resultado():
 
     informado = piezas["spies"]["encabezados"][0]
     assert informado.resultado == "A"
+    # Legacy consulta caeainformado, no resultado.
+    assert informado.caeainformado == 1
     assert informado.guardados == 1
 
 
@@ -361,6 +364,7 @@ def test_un_comprobante_rechazado_conserva_el_caea():
     fallido = piezas["spies"]["encabezados"][0]
     assert fallido.resultado == "E"
     assert fallido.cae == CAEA
+    assert fallido.caeainformado == 0
 
 
 def test_un_comprobante_rechazado_no_aborta_el_resto_del_ptovta():
