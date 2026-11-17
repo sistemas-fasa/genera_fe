@@ -256,6 +256,20 @@ class FEv1(WSFEv1):
         self.SetTicketAcceso(ta_string=ta)
         self.Cuit = self.cuit_emisor
         self.CAEASinMovimientoInformar(ptovta, caea)
+        # pyafipws no lanza cuando ARCA rechaza el aviso: deja el resultado en
+        # self.Resultado y el motivo en self.ErrMsg. Sin esta guarda el
+        # rendido marcaba el punto de venta como "sin movimiento informado"
+        # aunque ARCA hubiera contestado un error (por ejemplo 1204).
+        resultado = str(getattr(self, "Resultado", "") or "").strip().upper()
+        if resultado != "A":
+            motivo = str(getattr(self, "ErrMsg", "") or "").strip()
+            obs = str(getattr(self, "Obs", "") or "").strip()
+            raise RuntimeError(
+                "ARCA no acepto el aviso de CAEA sin movimiento de {}: "
+                "Resultado={} ErrMsg={} Obs={}".format(
+                    ptovta, resultado or "-", motivo or "-", obs or "-"
+                )
+            )
 
 
 class PyQRv1(PyQR):

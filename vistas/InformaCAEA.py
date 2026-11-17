@@ -19,7 +19,7 @@ from vistas.VistaBase import VistaBase
 class InfromaCAEAView(VistaBase):
 
     def initUi(self):
-        self.setGeometry(150, 150, 500, 150)
+        self.setGeometry(150, 150, 520, 210)
         self.layoutPpal = QVBoxLayout(self)
 
         self.layoutParametros = Periodo(texto='Periodo')
@@ -32,6 +32,11 @@ class InfromaCAEAView(VistaBase):
         self.txtPtoVta = EntradaTexto(inputmask='9999')
         self.layoutParametros.addWidget(lblPtoVta)
         self.layoutParametros.addWidget(self.txtPtoVta)
+
+        self.lblResultado = Etiqueta(texto='')
+        self.lblResultado.setWordWrap(True)
+        self.lblResultado.setMinimumHeight(50)
+        self.layoutPpal.addWidget(self.lblResultado)
 
         self.btnCerrar = BotonCerrarFormulario()
         self.btnIniciar = Boton(texto='Iniciar', imagen='imagenes/Accept.png')

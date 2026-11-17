@@ -39,6 +39,7 @@ from libs.Utiles import (
 )
 from libs.Avisos import mostrar_error, traducir_excepcion
 from libs.PanelDiagnostico import PanelDiagnostico
+from libs.VistaStub import VistaStub
 from modelos.CAEA import CAEA
 from modelos.CUIT import CUIT
 from modelos.CbteRelacionado import CbteRel
@@ -214,6 +215,21 @@ def _item_grilla_comprobante(
     ]
 
 
+def _escribir_xml(ruta, contenido):
+    """Graba un XML de pyafipws tolerando str o bytes.
+
+    No son del mismo tipo: con el CAEA, xml_request llega str y xml_response
+    bytes. Abrir los dos en "wb" hacia TypeError al escribir el request y
+    abortaba el comprobante entero antes de registrar el resultado.
+    """
+    if isinstance(contenido, bytes):
+        with open(ruta, "wb") as f:
+            f.write(contenido)
+    else:
+        with open(ruta, "w", encoding="utf-8") as f:
+            f.write(contenido or "")
+
+
 class MainController(ControladorBase):
     lProcesa = True
     cae = ""
@@ -231,6 +247,9 @@ class MainController(ControladorBase):
     afip_estados = None
     afip_ultima_verificacion = None
     afip_intervalo_verificacion = timedelta(minutes=2)
+    # La ventana para pedir la quincena siguiente se abre con la app ya
+    # corriendo: ademas del chequeo del arranque hay que reverificar cada tanto.
+    INTERVALO_VERIFICACION_CAEA_MINUTOS_DEFAULT = 10
     # El ciclo de procesamiento corre cada 500ms: sin este tope, la ausencia de
     # CAEA mandaria una alerta por ciclo.
     INTERVALO_ALERTA_CAEA_AUSENTE = timedelta(hours=1)
@@ -238,20 +257,37 @@ class MainController(ControladorBase):
     # El ciclo corre cada 500ms y cada intento abre conexión con AFIP.
     INTERVALO_REINTENTO_CAEA_SIN_RESPUESTA = timedelta(minutes=2)
 
-    def __init__(self):
-        super(MainController, self).__init__()
-        self.view = MainView()
-        self.view.initUi()
+    def __init__(self, view=None, modo_servicio=False):
+        self.modo_servicio = modo_servicio
+        if modo_servicio:
+            # Worker del rendido: reutiliza CreaFE sin timers, sin segunda
+            # MainView y sin mail de arranque. No se llama a super().__init__()
+            # porque ControladorBase crea un VistaBase (QDialog) y eso no se
+            # puede hacer en un hilo que no es el de la GUI.
+            self.view = view or VistaStub()
+        else:
+            super(MainController, self).__init__()
+            self.view = view or MainView()
         self.lProcesa = False
         self._procesando_ciclo = False
         self._caea_ausente_alertado_en = None
+        self.model = ModeloBase()
+        self.model.getDb()
+        # Graba xmlrequest.xml y xmlresponse.xml del ultimo comprobante para
+        # poder depurar contra AFIP. Queda en disco, no se guarda en la base.
+        self.grabaxml = True
+        if modo_servicio:
+            return
+        self.view.initUi()
         self._procesamiento_timer = QTimer(self.view)
         self._procesamiento_timer.setInterval(500)
         self._procesamiento_timer.timeout.connect(self._ejecutar_ciclo_procesamiento)
         self.conectarWidgets()
-        self.model = ModeloBase()
-        self.model.getDb()
         QTimer.singleShot(1000, self._verificar_caea_programado)
+        self._caea_timer = QTimer(self.view)
+        self._caea_timer.setInterval(self._intervalo_verificacion_caea_ms())
+        self._caea_timer.timeout.connect(self._verificar_caea_programado)
+        self._caea_timer.start()
         self._actualizar_estado_operativo_afip()
         self._actualizar_estado_operativo_emails()
         self.afip_intervalo_verificacion = self._leer_intervalo_verificacion_afip()
@@ -271,9 +307,6 @@ class MainController(ControladorBase):
             logging.info(
                 "Monitor AFIP arranque - notificacion por email deshabilitada por configuracion"
             )
-        # Graba xmlrequest.xml y xmlresponse.xml del ultimo comprobante para
-        # poder depurar contra AFIP. Queda en disco, no se guarda en la base.
-        self.grabaxml = True
 
     def _verificar_caea_programado(self):
         try:
@@ -327,6 +360,20 @@ class MainController(ControladorBase):
                 "No se pudo sincronizar contingencia CAEA para imprefiscal"
             )
 
+    def _intervalo_verificacion_caea_ms(self):
+        valor_ini = LeerIni(clave="caea_intervalo_verificacion_minutos")
+        try:
+            minutos = (
+                int(valor_ini)
+                if valor_ini
+                else self.INTERVALO_VERIFICACION_CAEA_MINUTOS_DEFAULT
+            )
+            if minutos < 1:
+                minutos = 1
+        except (TypeError, ValueError):
+            minutos = self.INTERVALO_VERIFICACION_CAEA_MINUTOS_DEFAULT
+        return minutos * 60 * 1000
+
     def _leer_intervalo_verificacion_afip(self):
         valor_ini = LeerIni(clave="afip_intervalo_verificacion_minutos")
         try:
@@ -374,11 +421,20 @@ class MainController(ControladorBase):
         self.view.btnPausar.clicked.connect(self.PausarProcesamiento)
         self.view.btnToggleEmails.clicked.connect(self.ToggleEnvioEmails)
         self.view.btnDiagnostico.clicked.connect(self.AbrirDiagnostico)
+        self.view.btnRendirCAEA.clicked.connect(self.AbrirRendirCAEA)
         self._actualizar_boton_emails()
 
     def AbrirDiagnostico(self):
         panel = PanelDiagnostico(collect_diagnostic_results(), parent=self.view)
         panel.exec_()
+
+    def AbrirRendirCAEA(self):
+        # Import perezoso: InformaCAEA importa Main, asi que hacerlo arriba
+        # daria un ciclo de imports.
+        from controladores.InformaCAEA import InformaCAEAController
+
+        dialogo = InformaCAEAController(controlador=self)
+        dialogo.exec_()
 
     def _envio_emails_activo(self):
         return (
@@ -889,16 +945,22 @@ class MainController(ControladorBase):
 
         if caea:
             wsfev1.EstablecerCampoFactura("caea", d.cae)
+            # ARCA exige la fecha/hora en que se genero el comprobante para los
+            # ptovta de contingencia CAEA; sin esto rechaza con el codigo 1440.
+            #
+            # OJO: la app no guarda esa hora en ningun lado. Solo tiene
+            # fechacbte (date) y vencecae (date). Se arma con el momento
+            #del rindado, asi que NO ordena cronologicamente los comprobantes
+            #de una misma tanda. Para ordenar bien haria falta que la
+            #impresora fiscal lo capture al emitir.
+            wsfev1.EstablecerCampoFactura(
+                "fecha_hs_gen", datetime.now().strftime("%Y%m%d%H%M%S")
+            )
             cae = wsfev1.CAEARegInformativo()
             # logging.warning(wsfev1.xml_request, wsfev1.xml_response)
             if self.grabaxml:
-                f = open("xmlrequest.xml", "wb")
-                f.write(wsfev1.xml_request)
-                f.close()
-
-                f = open("xmlresponse.xml", "wb")
-                f.write(wsfev1.xml_response)
-                f.close()
+                _escribir_xml("xmlrequest.xml", wsfev1.xml_request)
+                _escribir_xml("xmlresponse.xml", wsfev1.xml_response)
                 respuesta = Respuesta()
                 respuesta.nrelacion = d.nrelacion
                 respuesta.xmlrequest = wsfev1.xml_request
@@ -1126,11 +1188,13 @@ class MainController(ControladorBase):
             i += 1
 
             try:
-                # CreaFE recibe el CAEA en d.cae y devuelve el CAE real que
-                # asigna AFIP. Antes se escribia a mano resultado='A' con el
-                # numero de CAEA en el campo cae, sin informar nada: el
-                # comprobante quedaba "autorizado" localmente, ARCA nunca lo
-                # veia y, como resultado != '', el ciclo no lo tomaba mas.
+                # CreaFE recibe el CAEA en d.cae y lo devuelve validado por
+                # AFIP: en el regimen CAEA no hay un CAE por comprobante, el
+                # codigo de autorizacion es el propio CAEA y lo que AFIP
+                # devuelve es el resultado de validarlo. Antes se escribia a
+                # mano resultado='A' sin informar nada, asi que el comprobante
+                # quedaba "autorizado" localmente y, como resultado != '', el
+                # ciclo no lo tomaba mas.
                 d.cae = datacaea.CAEA
                 ok = self.CreaFE(d, caea=True)
                 respuesta_afip = (getattr(self, "xml_response", "") or "").strip()
@@ -1159,7 +1223,8 @@ class MainController(ControladorBase):
                     continue
                 else:
                     # AFIP contesto y rechazo: aca si corresponde marcar error.
-                    d.cae = ""
+                    # El CAEA sigue puesto: era valido, lo que no valido fue el
+                    # comprobante.
                     d.resultado = self.resultado or "E"
                     d.errmsg = self.errmsg
                     d.motivoobs = self.motivoobs

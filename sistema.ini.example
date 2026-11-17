@@ -6,6 +6,8 @@ basedatos = fe
 usuario = root
 host = 127.0.0.1
 afip_intervalo_verificacion_minutos = 2
+; cada cuanto se vuelve a consultar si corresponde pedir el CAEA de la quincena
+caea_intervalo_verificacion_minutos = 10
 afip_timeout_segundos = 30
 afip_cuit_homologacion = 00000000000
 email_admin_notificaciones = admin@example.com
