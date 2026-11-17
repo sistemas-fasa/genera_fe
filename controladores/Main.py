@@ -421,11 +421,20 @@ class MainController(ControladorBase):
         self.view.btnPausar.clicked.connect(self.PausarProcesamiento)
         self.view.btnToggleEmails.clicked.connect(self.ToggleEnvioEmails)
         self.view.btnDiagnostico.clicked.connect(self.AbrirDiagnostico)
+        self.view.btnRendirCAEA.clicked.connect(self.AbrirRendirCAEA)
         self._actualizar_boton_emails()
 
     def AbrirDiagnostico(self):
         panel = PanelDiagnostico(collect_diagnostic_results(), parent=self.view)
         panel.exec_()
+
+    def AbrirRendirCAEA(self):
+        # Import perezoso: InformaCAEA importa Main, asi que hacerlo arriba
+        # daria un ciclo de imports.
+        from controladores.InformaCAEA import InformaCAEAController
+
+        dialogo = InformaCAEAController(controlador=self)
+        dialogo.exec_()
 
     def _envio_emails_activo(self):
         return (

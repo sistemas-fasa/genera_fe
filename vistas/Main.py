@@ -76,11 +76,13 @@ class MainView(VistaBase):
         self.btnPausar.setEnabled(False)
         self.btnToggleEmails = Boton(texto='Emails: ACTIVO', imagen='imagenes/Accept.png')
         self.btnDiagnostico = Boton(texto='Estado del sistema', imagen='imagenes/buscar.png')
+        self.btnRendirCAEA = Boton(texto='Rendir CAEA', imagen='imagenes/buscar.png')
         layoutBotones = QHBoxLayout()
         layoutBotones.addWidget(self.btnIniciar)
         layoutBotones.addWidget(self.btnPausar)
         layoutBotones.addWidget(self.btnToggleEmails)
         layoutBotones.addWidget(self.btnDiagnostico)
+        layoutBotones.addWidget(self.btnRendirCAEA)
         layoutBotones.addWidget(self.btnCerrar)
 
         self.layoutPpal.addLayout(layoutBotones)
