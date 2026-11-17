@@ -18,6 +18,23 @@ from controladores.RendirCAEA import (
 CAEA = "71234567890123"
 
 
+def test_fe_factory_devuelve_instancia_no_clase():
+    """El factory por defecto debe dar un FEv1 con sus metodos enlazados.
+
+    Al devolver la clase, InformarCAEASinMovimiento(ptovta, caea) se enlazaba
+    como metodo no enlazado: ptovta pasaba a ser self, caea pasaba a ser
+    ptovta y Python reclamaba el argumento 'caea' que faltaba.
+    """
+    import inspect
+
+    from controladores.RendirCAEA import _fe_factory
+
+    instancia = _fe_factory()
+    assert not inspect.isclass(instancia)
+    metodo = instancia.InformarCAEASinMovimiento
+    assert list(inspect.signature(metodo).parameters) == ["ptovta", "caea"]
+
+
 class CampoFake:
     def __init__(self, nombre):
         self.nombre = nombre

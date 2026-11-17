@@ -53,7 +53,9 @@ def _encabezado_model():
 def _fe_factory():
     from controladores.FE import FEv1
 
-    return FEv1
+    # Devolver la clase hacia que InformarCAEASinMovimiento(ptovta, caea) se
+    # enlazara como metodo no enlazado y faltara el argumento 'caea'.
+    return FEv1()
 
 
 def _controlador_factory():
