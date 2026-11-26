@@ -18,6 +18,7 @@ import logging
 import os
 import sys
 from os.path import abspath
+from time import sleep
 
 import qrcode
 
@@ -90,7 +91,28 @@ class FEv1(WSFEv1):
                 tipo, ptovta, self.Cuit
             )
         )
-        ultimo = self.CompUltimoAutorizado(tipo_cbte=tipo, punto_vta=ptovta)
+        lanzar_excepciones = self.LanzarExcepciones
+        try:
+            # PyAfipWs puede ocultar el error de socket detrás de un TypeError.
+            self.LanzarExcepciones = True
+            for espera in (1, 2, None):
+                try:
+                    ultimo = self.CompUltimoAutorizado(tipo_cbte=tipo, punto_vta=ptovta)
+                    break
+                except (ConnectionResetError, ConnectionAbortedError, TypeError) as error:
+                    desconexion = error.__context__ if isinstance(error, TypeError) else error
+                    if not isinstance(desconexion, (ConnectionResetError, ConnectionAbortedError)):
+                        raise
+                    if espera is None:
+                        raise desconexion from None
+                    logging.warning(
+                        "Se interrumpió la consulta a WSFE (%s). Reintento en %s s.",
+                        desconexion,
+                        espera,
+                    )
+                    sleep(espera)
+        finally:
+            self.LanzarExcepciones = lanzar_excepciones
         logging.debug("CompUltimoAutorizado response: {}".format(ultimo))
         return ultimo
 

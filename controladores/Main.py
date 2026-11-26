@@ -823,7 +823,11 @@ class MainController(ControladorBase):
         # el tipo de comprobante lo tiene que guardar correctamente el sistema que pide la generacion
         tipo_cbte = d.tipocbte
         nro_doc = d.nrodoc
-        cbt_desde = int(wsfev1.UltimoComprobante(tipo=tipo_cbte, ptovta=punto_vta)) + 1
+        ultimo = wsfev1.UltimoComprobante(tipo=tipo_cbte, ptovta=punto_vta)
+        if ultimo in (None, ""):
+            detalle = wsfev1.Excepcion or wsfev1.ErrMsg or "respuesta sin número de comprobante"
+            raise RuntimeError(f"No se pudo consultar el último comprobante en ARCA: {detalle.strip()}")
+        cbt_desde = int(ultimo) + 1
         cbt_hasta = cbt_desde
         imp_total = str(round(d.imptotal, 2))
         imp_tot_conc = "0.00"
