@@ -18,6 +18,23 @@ from controladores.RendirCAEA import (
 CAEA = "71234567890123"
 
 
+def test_fe_factory_devuelve_instancia_no_clase():
+    """El factory por defecto debe dar un FEv1 con sus metodos enlazados.
+
+    Al devolver la clase, InformarCAEASinMovimiento(ptovta, caea) se enlazaba
+    como metodo no enlazado: ptovta pasaba a ser self, caea pasaba a ser
+    ptovta y Python reclamaba el argumento 'caea' que faltaba.
+    """
+    import inspect
+
+    from controladores.RendirCAEA import _fe_factory
+
+    instancia = _fe_factory()
+    assert not inspect.isclass(instancia)
+    metodo = instancia.InformarCAEASinMovimiento
+    assert list(inspect.signature(metodo).parameters) == ["ptovta", "caea"]
+
+
 class CampoFake:
     def __init__(self, nombre):
         self.nombre = nombre
@@ -127,6 +144,7 @@ class EncabezadoFake:
         self.cae = cae
         self.tipows = "A"
         self.resultado = ""
+        self.caeainformado = 0
         self.errmsg = ""
         self.motivoobs = ""
         self.vencecae = None
@@ -314,6 +332,8 @@ def test_comprobantes_se_informan_y_quedan_marcados_con_el_resultado():
 
     informado = piezas["spies"]["encabezados"][0]
     assert informado.resultado == "A"
+    # Legacy consulta caeainformado, no resultado.
+    assert informado.caeainformado == 1
     assert informado.guardados == 1
 
 
@@ -344,6 +364,7 @@ def test_un_comprobante_rechazado_conserva_el_caea():
     fallido = piezas["spies"]["encabezados"][0]
     assert fallido.resultado == "E"
     assert fallido.cae == CAEA
+    assert fallido.caeainformado == 0
 
 
 def test_un_comprobante_rechazado_no_aborta_el_resto_del_ptovta():

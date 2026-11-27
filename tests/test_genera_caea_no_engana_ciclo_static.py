@@ -172,3 +172,53 @@ def test_genera_caea_sigue_llamando_al_avisador_de_caea_ausente():
     ]
 
     assert "_alertar_caea_ausente" in llamadas
+
+
+def test_genera_caea_no_le_roba_comprobantes_a_la_quincena_cerrada():
+    """Un pendiente que ya lleva el CAEA de otra quincena le pertenece a esa
+    quincena: lo informa la rendicion. Si el ciclo se lo lleva, le sobrescribe
+    el CAEA con el de la quincena actual y la rendicion informa 0."""
+    genera = _function_def("GeneraCAEA")
+    source = ast.get_source_segment(_source(), genera) or ""
+
+    assert "Encabezado.cae" in source
+    assert "is_null" in source
+    assert "Encabezado.cae == datacaea.CAEA" in source
+
+
+def test_genera_caea_marca_caeainformado_cuando_afip_acepta():
+    """Legacy consulta caeainformado, no resultado. Marcar solo resultado
+    deja el comprobante informado para el ciclo y pendiente para los procesos
+    viejos."""
+    genera = _function_def("GeneraCAEA")
+    ramas_ok = [
+        node
+        for node in ast.walk(genera)
+        if isinstance(node, ast.If)
+        and isinstance(node.test, ast.Name)
+        and node.test.id == "ok"
+    ]
+    assert ramas_ok, "GeneraCAEA debe tener una rama de exito de CreaFE"
+
+    marcados = [
+        asignacion
+        for rama in ramas_ok
+        for sentencia in rama.body
+        for asignacion in ast.walk(sentencia)
+        if isinstance(asignacion, ast.Assign)
+        and any(
+            isinstance(destino, ast.Attribute) and destino.attr == "caeainformado"
+            for destino in asignacion.targets
+        )
+    ]
+    assert marcados, "La rama de exito debe marcar caeainformado"
+    assert any(
+        isinstance(node.value, ast.Constant) and node.value.value == 1
+        for node in marcados
+    )
+
+
+def test_modelo_encabezado_declara_caeainformado():
+    source = (ROOT / "modelos" / "Encabezado.py").read_text(encoding="utf-8")
+
+    assert "caeainformado = BitBooleanField" in source

@@ -108,6 +108,13 @@ class PyFPDF(FPDF):
         )
 
 
+class PlantillaComprobante(Template):
+    def set(self, name, value):
+        # Cada diseño define solo los campos que imprime.
+        if name in self:
+            super().set(name, value)
+
+
 class PyFPDFPlantilla(FPDF):
     def __init__(self):
         super().__init__()
@@ -155,7 +162,7 @@ class PyFPDFPlantilla(FPDF):
                     field["text"] = ""
 
         # genero el renderizador con propiedades del PDF
-        t = Template(
+        t = PlantillaComprobante(
             elements=self.elements,
             format=papel,
             orientation=orientacion,

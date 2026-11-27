@@ -17,7 +17,10 @@ import json
 import logging
 import os
 import sys
+from datetime import datetime
 from os.path import abspath
+from time import sleep
+from xml.etree import ElementTree
 
 import qrcode
 
@@ -37,6 +40,20 @@ from pyafipws.wsfev1 import WSFEv1
 
 def _afip_timeout():
     return LeerTimeoutAFIP()
+
+
+def _fecha_respuesta_wsfe(xml_respuesta):
+    if not xml_respuesta:
+        return "no informada"
+    try:
+        fecha = ElementTree.fromstring(xml_respuesta).findtext(
+            "./{*}Header/{*}FEHeaderInfo/{*}fecha"
+        )
+        if fecha and fecha.strip():
+            return datetime.fromisoformat(fecha.strip()).isoformat()
+    except (ElementTree.ParseError, ValueError):
+        return "no legible"
+    return "no informada"
 
 
 class FEv1(WSFEv1):
@@ -90,7 +107,28 @@ class FEv1(WSFEv1):
                 tipo, ptovta, self.Cuit
             )
         )
-        ultimo = self.CompUltimoAutorizado(tipo_cbte=tipo, punto_vta=ptovta)
+        lanzar_excepciones = self.LanzarExcepciones
+        try:
+            # PyAfipWs puede ocultar el error de socket detrás de un TypeError.
+            self.LanzarExcepciones = True
+            for espera in (1, 2, None):
+                try:
+                    ultimo = self.CompUltimoAutorizado(tipo_cbte=tipo, punto_vta=ptovta)
+                    break
+                except (ConnectionResetError, ConnectionAbortedError, TypeError) as error:
+                    desconexion = error.__context__ if isinstance(error, TypeError) else error
+                    if not isinstance(desconexion, (ConnectionResetError, ConnectionAbortedError)):
+                        raise
+                    if espera is None:
+                        raise desconexion from None
+                    logging.warning(
+                        "Se interrumpió la consulta a WSFE (%s). Reintento en %s s.",
+                        desconexion,
+                        espera,
+                    )
+                    sleep(espera)
+        finally:
+            self.LanzarExcepciones = lanzar_excepciones
         logging.debug("CompUltimoAutorizado response: {}".format(ultimo))
         return ultimo
 
@@ -237,8 +275,27 @@ class FEv1(WSFEv1):
         CAEA = self.CAEAConsultar(periodo, orden)
 
         if not CAEA:  # si no tengo ya solicitado uno lo solicito
-            # solicito nuevo CAEA
+            # La solicitud reinicia los campos de diagnóstico de la consulta.
+            consulta_codigo = self.ErrCode
+            consulta_mensaje = self.ErrMsg
+            hora_local_solicitud = datetime.now().astimezone().isoformat()
             self.CAEASolicitar(periodo, orden)
+            if not self.CAEA:
+                logging.error(
+                    "Obtención de CAEA sin resultado (periodo=%s orden=%s cuit_emisor_final=%s). "
+                    "FECAEAConsultar: codigo=%s mensaje=%r. "
+                    "FECAEASolicitar: codigo=%s mensaje=%r "
+                    "hora_local=%s fecha_wsfe=%s",
+                    periodo,
+                    orden,
+                    str(self.Cuit).strip()[-4:] if self.Cuit else "no configurado",
+                    consulta_codigo or "sin código",
+                    consulta_mensaje or "sin mensaje",
+                    self.ErrCode or "sin código",
+                    self.ErrMsg or "sin mensaje",
+                    hora_local_solicitud,
+                    _fecha_respuesta_wsfe(self.XmlResponse),
+                )
 
         return self.CAEA
 

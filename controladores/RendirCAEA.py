@@ -53,7 +53,9 @@ def _encabezado_model():
 def _fe_factory():
     from controladores.FE import FEv1
 
-    return FEv1
+    # Devolver la clase hacia que InformarCAEASinMovimiento(ptovta, caea) se
+    # enlazara como metodo no enlazado y faltara el argumento 'caea'.
+    return FEv1()
 
 
 def _controlador_factory():
@@ -274,6 +276,10 @@ def rendir_ptovta(
                 # Resultado que respondio AFIP.
                 encabezado.cae = controlador.cae
                 encabezado.resultado = controlador.resultado
+                # Legacy lee este flag, no resultado: sin marcarlo el
+                # comprobante queda "informado" para el servicio y pendiente
+                # para los procesos viejos.
+                encabezado.caeainformado = 1
                 encabezado.cbtenro = str(controlador.comprobante).zfill(8)
                 # AFIP no define vencimiento para CAEA: se usa la fecha tope de
                 # informe del propio CAEA.

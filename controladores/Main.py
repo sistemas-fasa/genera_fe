@@ -823,7 +823,11 @@ class MainController(ControladorBase):
         # el tipo de comprobante lo tiene que guardar correctamente el sistema que pide la generacion
         tipo_cbte = d.tipocbte
         nro_doc = d.nrodoc
-        cbt_desde = int(wsfev1.UltimoComprobante(tipo=tipo_cbte, ptovta=punto_vta)) + 1
+        ultimo = wsfev1.UltimoComprobante(tipo=tipo_cbte, ptovta=punto_vta)
+        if ultimo in (None, ""):
+            detalle = wsfev1.Excepcion or wsfev1.ErrMsg or "respuesta sin número de comprobante"
+            raise RuntimeError(f"No se pudo consultar el último comprobante en ARCA: {detalle.strip()}")
+        cbt_desde = int(ultimo) + 1
         cbt_hasta = cbt_desde
         imp_total = str(round(d.imptotal, 2))
         imp_tot_conc = "0.00"
@@ -1131,24 +1135,6 @@ class MainController(ControladorBase):
 
     # genera facturas con CAEA para el caso de que no haya internet
     def GeneraCAEA(self):
-        data = Encabezado.select().where(
-            Encabezado.resultado == "",
-            Encabezado.listo == True,
-            Encabezado.tipows == "A",
-        )
-        if not data.exists():
-            return
-
-        reintento_en = getattr(self, "_caea_reintento_en", None)
-        if reintento_en is not None and datetime.now() < reintento_en:
-            logging.debug(
-                "GeneraCAEA en espera por falta de respuesta de AFIP: reintento a las %s",
-                reintento_en,
-            )
-            return
-
-        total = data.count()
-        i = 1.0
         dia = datetime.now().day
         periodo = FechaMysql()[:6]
         if dia <= 15:
@@ -1170,6 +1156,39 @@ class MainController(ControladorBase):
             )
             .first()
         )
+
+        data = Encabezado.select().where(
+            Encabezado.resultado == "",
+            Encabezado.listo == True,
+            Encabezado.tipows == "A",
+        )
+        if not data.exists():
+            return
+
+        # Un comprobante pendiente que ya lleva un CAEA de otra quincena le
+        # pertenece a esa quincena: lo atiende la rendicion, no este ciclo.
+        # Sin este guard el ciclo le sobrescribiria el CAEA con el de la
+        # quincena actual y la rendicion de la cerrada se quedaria sin
+        # comprobantes para informar.
+        if datacaea is not None:
+            data = data.where(
+                (Encabezado.cae == "")
+                | Encabezado.cae.is_null()
+                | (Encabezado.cae == datacaea.CAEA)
+            )
+            if not data.exists():
+                return
+
+        reintento_en = getattr(self, "_caea_reintento_en", None)
+        if reintento_en is not None and datetime.now() < reintento_en:
+            logging.debug(
+                "GeneraCAEA en espera por falta de respuesta de AFIP: reintento a las %s",
+                reintento_en,
+            )
+            return
+
+        total = data.count()
+        i = 1.0
         if datacaea is None:
             logging.warning(
                 "No hay CAEA para periodo %s orden %s: se postergan %s comprobante(s)",
@@ -1203,6 +1222,10 @@ class MainController(ControladorBase):
                     self._caea_reintento_en = None
                     d.cae = self.cae
                     d.resultado = self.resultado
+                    # Legacy lee este flag, no resultado: sin marcarlo el
+                    # comprobante queda "informado" para el ciclo y pendiente
+                    # para los procesos viejos.
+                    d.caeainformado = 1
                     d.cbtenro = str(self.comprobante).zfill(8)
                     d.vencecae = (
                         datetime.strptime(self.vencecae, "%Y%m%d")
