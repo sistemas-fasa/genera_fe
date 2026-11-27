@@ -116,10 +116,19 @@ def _caea_model_default():
     return CAEA
 
 
-def _fe_factory_default():
+def _fe_factory_default(empresa_id):
     from controladores.FE import FEv1
+    from libs.Utiles import LeerIni
+    from modelos.Empresas import Empresa
 
-    return FEv1
+    empresa = Empresa.get_by_id(empresa_id)
+    wsfe = FEv1()
+    wsfe.empresa = empresa.codigo
+    wsfe.cuit_emisor = empresa.cuit.strip()
+    if LeerIni(clave="homo") == "N":
+        wsfe.cert_prod = empresa.crt.strip()
+        wsfe.privatekey_prod = empresa.key.strip()
+    return wsfe
 
 
 def _encolar_email_default(*args, **kwargs):
@@ -294,14 +303,13 @@ def solicitar_caea_si_corresponde(
         return None
 
     caea_model = caea_model or _caea_model_default()
-    fe_factory = fe_factory or _fe_factory_default()
     notificador = notificador or enviar_notificacion_caea_obtenido
 
     for periodo, orden in candidatos:
         if caea_ya_existe(periodo, orden, empresa_id, caea_model=caea_model):
             continue
 
-        wsfe = fe_factory()
+        wsfe = fe_factory() if fe_factory else _fe_factory_default(empresa_id)
         wsfe.SolicitarCAEA(periodo, orden)
         if not getattr(wsfe, "CAEA", ""):
             raise RuntimeError("AFIP no devolvio CAEA para periodo/orden")

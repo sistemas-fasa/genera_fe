@@ -156,37 +156,53 @@ def encolar_email(
             "El comprobante no se enviaría.".format(", ".join(faltantes))
         )
 
+    destinatarios_norm = _parsear_destinatarios(destinatario)
+    if not destinatarios_norm:
+        raise ValueError("No se puede encolar el email: destinatario vacío o inválido.")
+
+    cc_norm = _parsear_destinatarios(cc)
+    cco_norm = _parsear_destinatarios(cco)
+
     datos = dict(
-        destinatario=destinatario,
+        destinatario=",".join(destinatarios_norm),
         asunto=asunto,
         cuerpo_html=cuerpo_html,
         cuerpo_texto=cuerpo_texto,
         adjunto_ruta=",".join(rutas) if rutas else None,
         adjunto_nombre=adjunto_nombre,
-        cc=cc,
-        cco=cco,
+        cc=",".join(cc_norm) if cc_norm else None,
+        cco=",".join(cco_norm) if cco_norm else None,
         quien_envia=quien_envia,
     )
     if empresa_id is not None:
         datos["empresa_id"] = empresa_id
     email = EmailPendiente.create(**datos)
-    logging.info(f"📥 Email encolado ID {email.id} para {destinatario}")
+    logging.info(
+        "📥 Email encolado ID %s para %s (adjunto=%s)",
+        email.id,
+        datos["destinatario"],
+        datos["adjunto_ruta"] or "-",
+    )
     return email
 
 
 def _parsear_destinatarios(destinatarios_str):
     """
-    Parsea un string de destinatarios separados por coma a una lista.
+    Parsea un string de destinatarios a una lista.
 
-    Deduplica preservando el orden: los registros traían el mismo destino
-    repetido (p. ej. 'a@x.com,b@y.com,a@x.com,'), lo que dispara la alarma de
-    "intentos de envío duplicados" en los filtros antispam.
+    Acepta separadores comunes que pueden venir del ERP (coma, punto y coma,
+    saltos de línea). Deduplica preservando el orden: los registros traían el
+    mismo destino repetido (p. ej. 'a@x.com,b@y.com,a@x.com,'), lo que dispara
+    la alarma de "intentos de envío duplicados" en los filtros antispam.
     """
     if not destinatarios_str:
         return []
+    normalizado = (
+        str(destinatarios_str).replace(";", ",").replace("\r", ",").replace("\n", ",")
+    )
     vistos = set()
     unicos = []
-    for d in destinatarios_str.split(","):
+    for d in normalizado.split(","):
         d = d.strip()
         if not d:
             continue

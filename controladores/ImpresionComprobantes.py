@@ -49,80 +49,145 @@ class ImpresionComprobantesController(QThread):
     nrelacion = 0
     idcabfact = 0
 
+    @staticmethod
+    def _normalizar_destinatarios(correos):
+        """Normaliza correos desde Cabfact (acepta coma, punto y coma y saltos)."""
+        if not correos:
+            return []
+        texto = str(correos).replace(";", ",").replace("\r", ",").replace("\n", ",")
+        vistos = set()
+        destinatarios = []
+        for parte in texto.split(","):
+            email = parte.strip()
+            if not email:
+                continue
+            clave = email.lower()
+            if clave in vistos:
+                continue
+            vistos.add(clave)
+            destinatarios.append(email)
+        return destinatarios
+
     def run(self, *args, **kwargs):
-        self.elimina_archivos_viejos()
+        cab = None
         try:
-            encabeza = Encabezado.get(Encabezado.nrelacion == self.nrelacion)
-        except DoesNotExist:
-            return
+            self.elimina_archivos_viejos()
+            try:
+                encabeza = Encabezado.get(Encabezado.nrelacion == self.nrelacion)
+            except DoesNotExist:
+                return
 
-        impre = PyFPDFPlantilla()
-        self.totales = {
-            "dgr": 0,
-            "iva21": 0,
-            "iva105": 0,
-            "neto": 0,
-            "iva_contenido": 0,
-        }
-        cArchivo = getFileName(
-            "{}-{}-{}".format(encabeza.tipocbte, encabeza.puntovta, encabeza.cbtenro),
-            True,
-        )
-        cab = Cabfact.get(Cabfact.idcabfact == self.idcabfact)
-        if cab.carpeta_guardado.strip():
-            if not os.path.isdir(cab.carpeta_guardado.strip()):
-                os.mkdir(cab.carpeta_guardado.strip())
-            cArchivoPDF = join(cab.carpeta_guardado, "{}.pdf".format(cArchivo))
-        else:
-            cArchivoPDF = join("pdf", "{}.pdf".format(cArchivo))
+            try:
+                cab = Cabfact.get(Cabfact.idcabfact == self.idcabfact)
+            except DoesNotExist:
+                logging.error(
+                    "No se encontró cabfact idcabfact=%s para impresión/envío",
+                    self.idcabfact,
+                )
+                return
 
-        impre.CUIT = "CUIT: {}".format(encabeza.empresa.cuit)
-        impre.IIBB = "IIBB: {}".format(encabeza.empresa.cuit)
-        impre.inicio_actividades = encabeza.empresa.inicio_actividades
-        impre.logo = encabeza.empresa.logo
-        # Registrar valor de logo en el logging del sistema (valor crudo + existencia)
-        logger = logging.getLogger("sistema")
-        logo_val = getattr(impre, "logo", None)
-        logo_exists = False
-        try:
-            if isinstance(logo_val, str) and logo_val:
-                logo_exists = os.path.exists(logo_val)
-        except Exception:
-            logo_exists = False
-        logger.info("Impre.logo=%r exists=%s", logo_val, logo_exists)
-        logger.info("Llamando a impre.Cabecera() con logo=%r", impre.logo)
-        impre.Cabecera()
-        self.CreaQR(impre, encabeza)
-        plantilla = ParamSist.ObtenerParametro("PLANTILLA_COMPROBANTE")
-        if plantilla and os.path.isfile(plantilla):
-            impre.CargarFormato(plantilla)
-        else:
-            impre.CargarFormato("plantillas/factura.csv")
-        impre.CrearPlantilla()
-        self.encabezado_comprobante(impre, encabeza)
-        self.detalle_comprobante(impre)
-        self.pie_comprobante(impre, encabeza)
-        impre.ProcesarPlantilla(
-            hojas=self._hojas_detalle, on_page=self._set_campos_pagina_detalle
-        )
-        # Guardar la ruta ABSOLUTA: encolar_email la persiste y el envío puede
-        # ocurrir más tarde y desde otro contexto, donde una ruta relativa se
-        # resolvería contra otro directorio y el PDF se perdería en silencio.
-        cArchivoPDF = os.path.abspath(cArchivoPDF)
-        impre.GenerarPDF(cArchivoPDF)
-        if not os.path.isfile(cArchivoPDF):
-            # Si el PDF no llegó a generarse, dejar el error en el comprobante
-            # en vez de mandar un correo con "comprobante adjunto" sin adjunto.
-            cab.error = "No se pudo generar el PDF del comprobante ({})".format(
-                cArchivoPDF
+            impre = PyFPDFPlantilla()
+            self.totales = {
+                "dgr": 0,
+                "iva21": 0,
+                "iva105": 0,
+                "neto": 0,
+                "iva_contenido": 0,
+            }
+            cArchivo = getFileName(
+                "{}-{}-{}".format(
+                    encabeza.tipocbte, encabeza.puntovta, encabeza.cbtenro
+                ),
+                True,
             )
-            cab.save()
-        elif cab.correos:
-            self.envia_correo(cArchivoPDF, encabeza)
-        # self.sube_ftp_fasa(cArchivoPDF, "{}-{}-{}.pdf".format(
-        #     encabeza.tipocbte, encabeza.puntovta, encabeza.cbtenro
-        # ))
-        self.taskFinished.emit()
+
+            carpeta_guardado = (cab.carpeta_guardado or "").strip()
+            if carpeta_guardado:
+                destino_dir = os.path.abspath(carpeta_guardado)
+            else:
+                destino_dir = os.path.abspath("pdf")
+            os.makedirs(destino_dir, exist_ok=True)
+            cArchivoPDF = os.path.abspath(
+                join(destino_dir, "{}.pdf".format(cArchivo))
+            )
+
+            impre.CUIT = "CUIT: {}".format(encabeza.empresa.cuit)
+            impre.IIBB = "IIBB: {}".format(encabeza.empresa.cuit)
+            impre.inicio_actividades = encabeza.empresa.inicio_actividades
+            impre.logo = encabeza.empresa.logo
+            # Registrar valor de logo en el logging del sistema (valor crudo + existencia)
+            logger = logging.getLogger("sistema")
+            logo_val = getattr(impre, "logo", None)
+            logo_exists = False
+            try:
+                if isinstance(logo_val, str) and logo_val:
+                    logo_exists = os.path.exists(logo_val)
+            except Exception:
+                logo_exists = False
+            logger.info("Impre.logo=%r exists=%s", logo_val, logo_exists)
+            logger.info("Llamando a impre.Cabecera() con logo=%r", impre.logo)
+            impre.Cabecera()
+            self.CreaQR(impre, encabeza)
+            plantilla = ParamSist.ObtenerParametro("PLANTILLA_COMPROBANTE")
+            if plantilla and os.path.isfile(plantilla):
+                impre.CargarFormato(plantilla)
+            else:
+                impre.CargarFormato("plantillas/factura.csv")
+            impre.CrearPlantilla()
+            self.encabezado_comprobante(impre, encabeza)
+            self.detalle_comprobante(impre)
+            self.pie_comprobante(impre, encabeza)
+            impre.ProcesarPlantilla(
+                hojas=self._hojas_detalle, on_page=self._set_campos_pagina_detalle
+            )
+            # Guardar la ruta ABSOLUTA: encolar_email la persiste y el envío puede
+            # ocurrir más tarde y desde otro contexto, donde una ruta relativa se
+            # resolvería contra otro directorio y el PDF se perdería en silencio.
+            impre.GenerarPDF(cArchivoPDF)
+            if not os.path.isfile(cArchivoPDF):
+                # Si el PDF no llegó a generarse, dejar el error en el comprobante
+                # en vez de mandar un correo con "comprobante adjunto" sin adjunto.
+                cab.error = "No se pudo generar el PDF del comprobante ({})".format(
+                    cArchivoPDF
+                )
+                cab.save()
+            else:
+                destinatarios = self._normalizar_destinatarios(cab.correos)
+                if destinatarios:
+                    self.envia_correo(cArchivoPDF, encabeza, destinatarios)
+                else:
+                    cab.error = (
+                        "PDF generado ({}) pero no se encoló email: el comprobante "
+                        "no tiene correos destinatarios configurados."
+                    ).format(cArchivoPDF)
+                    cab.save()
+                    logging.warning(
+                        "Cabfact %s sin destinatarios de correo; PDF: %s",
+                        self.idcabfact,
+                        cArchivoPDF,
+                    )
+            # self.sube_ftp_fasa(cArchivoPDF, "{}-{}-{}.pdf".format(
+            #     encabeza.tipocbte, encabeza.puntovta, encabeza.cbtenro
+            # ))
+        except Exception as e:
+            logging.exception(
+                "Error generando/enviando comprobante nrelacion=%s idcabfact=%s",
+                self.nrelacion,
+                self.idcabfact,
+            )
+            try:
+                if cab is None and self.idcabfact:
+                    cab = Cabfact.get_or_none(Cabfact.idcabfact == self.idcabfact)
+                if cab:
+                    cab.error = "Error al generar/enviar comprobante: {}".format(e)
+                    cab.save()
+            except Exception:
+                logging.exception(
+                    "No se pudo guardar el error del comprobante idcabfact=%s",
+                    self.idcabfact,
+                )
+        finally:
+            self.taskFinished.emit()
 
     def encabezado_comprobante(self, impre, encabeza):
         impre.EstableceCampo("TipoCBTE", encabeza.tipocbte)
@@ -338,14 +403,27 @@ class ImpresionComprobantesController(QThread):
                 f"IVA Contenido: ${round(self.totales['iva_contenido'], 2)}",
             )
 
-    def envia_correo(self, cArchivoPDF, encabeza):
+    def envia_correo(self, cArchivoPDF, encabeza, destinatarios=None):
         from controladores.EnvioEmailsPendientes import encolar_email
         from modelos.ParametrosSistema import ParamSist
 
         cab = Cabfact.get(Cabfact.idcabfact == self.idcabfact)
 
         # Preparar destinatarios
-        destinatario = cab.correos
+        if destinatarios is None:
+            destinatarios = self._normalizar_destinatarios(cab.correos)
+        if isinstance(destinatarios, (list, tuple)):
+            destinatario = ",".join([d for d in destinatarios if d])
+        else:
+            destinatario = ",".join(self._normalizar_destinatarios(destinatarios))
+
+        if not destinatario:
+            cab.error = (
+                "PDF generado ({}) pero no se encoló email: destinatarios vacíos "
+                "o inválidos."
+            ).format(cArchivoPDF)
+            cab.save()
+            return
 
         # CC configurable desde parámetros del sistema (con fallback al hardcodeado)
         cc_facturas = ParamSist.ObtenerParametro("EMAIL_CC_FACTURAS")
@@ -353,7 +431,9 @@ class ImpresionComprobantesController(QThread):
             cc_facturas = "fe@ferreteriaavenida.com.ar"
 
         # Preparar asunto
-        motivo = "Se envia comprobante electronico adjunto {}".format(cab.razon_social)
+        motivo = "Se envia comprobante electronico adjunto {}".format(
+            cab.razon_social or ""
+        ).strip()
 
         # Preparar cuerpo del mensaje
         if cab.mensaje_html:
@@ -365,7 +445,7 @@ class ImpresionComprobantesController(QThread):
 
         # Encolar el email en lugar de enviarlo directamente
         try:
-            encolar_email(
+            email = encolar_email(
                 destinatario=destinatario,
                 asunto=motivo,
                 cuerpo_html=cuerpo_html,
@@ -376,10 +456,26 @@ class ImpresionComprobantesController(QThread):
                 quien_envia=cab.remitente
                 if cab.remitente
                 else None,  # Usar remitente personalizado si está definido
+                empresa_id=getattr(encabeza, "empresa_id", None)
+                or getattr(getattr(encabeza, "empresa", None), "codigo", None),
+            )
+            cab.error = ""
+            cab.save()
+            logging.info(
+                "Comprobante idcabfact=%s encolado para envío (email ID %s, pdf=%s, to=%s)",
+                self.idcabfact,
+                getattr(email, "id", "?"),
+                cArchivoPDF,
+                destinatario,
             )
         except Exception as e:
-            cab.error = f"Error al encolar email: {e}"
+            cab.error = "Error al encolar email: {}".format(e)
             cab.save()
+            logging.exception(
+                "No se pudo encolar email de comprobante idcabfact=%s pdf=%s",
+                self.idcabfact,
+                cArchivoPDF,
+            )
 
     def elimina_archivos_viejos(self):
         workdir = os.path.abspath("pdf")
